@@ -27,6 +27,12 @@ locals {
   # Public /24s come after them and only hold the NAT gateway and load balancers.
   private_subnets = [for i in range(length(var.zone_ids)) : cidrsubnet(var.cidr, 3, i)]
   public_subnets  = [for i in range(length(var.zone_ids)) : cidrsubnet(var.cidr, 8, length(var.zone_ids) * 32 + i)]
+
+  # `tier` is what downstream stacks look subnets up by (see
+  # modules/network-lookup/aws). The kubernetes.io tags let the AWS Load
+  # Balancer Controller find the subnets.
+  public_subnet_tags  = { tier = "public", "kubernetes.io/role/elb" = "1" }
+  private_subnet_tags = { tier = "private", "kubernetes.io/role/internal-elb" = "1" }
 }
 
 module "vpc" {
@@ -43,9 +49,8 @@ module "vpc" {
   private_subnets = local.private_subnets
   public_subnets  = local.public_subnets
 
-  # Tags let the AWS Load Balancer Controller find the subnets.
-  public_subnet_tags  = { "kubernetes.io/role/elb" = "1" }
-  private_subnet_tags = { "kubernetes.io/role/internal-elb" = "1" }
+  public_subnet_tags  = local.public_subnet_tags
+  private_subnet_tags = local.private_subnet_tags
 
   # One NAT gateway for the PoC. Production would use one per AZ.
   enable_nat_gateway     = true

@@ -77,6 +77,15 @@ run "subnet_layout" {
   }
 }
 
+run "subnets_tagged_for_lookup" {
+  command = plan
+
+  assert {
+    condition     = local.private_subnet_tags.tier == "private" && local.public_subnet_tags.tier == "public"
+    error_message = "Subnets must carry the tier tag that network-lookup/aws filters on."
+  }
+}
+
 run "default_security_group_denies_all" {
   command = plan
 
