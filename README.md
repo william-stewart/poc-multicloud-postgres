@@ -31,6 +31,29 @@ The ranges don't overlap, so a VPN and streaming replication can be added later.
 | GKE pods (secondary range) | `10.21.0.0/16` |
 | GKE services (secondary range) | `10.22.0.0/20` |
 
+## State backends (`infra/00-bootstrap`)
+
+Each cloud gets its own bootstrap stack, so neither needs the other cloud's
+credentials. The stacks keep their own state locally (gitignored), because they
+create the remote backends everything else uses. That state holds only bucket
+and key identifiers.
+
+| | AWS | GCP |
+| --- | --- | --- |
+| Bucket | S3, versioned, public access blocked, ACLs disabled, TLS 1.2+ enforced by policy | GCS, versioned, public access prevention enforced, uniform bucket-level access |
+| Encryption | Customer-managed KMS key with rotation | Customer-managed Cloud KMS key, 90-day rotation |
+| Locking | S3-native lock file (`use_lockfile`), so no DynamoDB table | Built into the GCS backend |
+| Retention | Old state versions expire after 90 days | Old state versions are deleted after 90 days |
+
+Buckets and keys have `prevent_destroy`, so a stray `tofu destroy` can't take
+the state with them.
+
+```sh
+tofu -chdir=infra/00-bootstrap/aws init && tofu -chdir=infra/00-bootstrap/aws apply
+tofu -chdir=infra/00-bootstrap/gcp init && tofu -chdir=infra/00-bootstrap/gcp apply -var project_id=<project>
+tofu -chdir=infra/00-bootstrap/aws output backend_config   # values for later stacks
+```
+
 ## Local validation
 
 Tool versions are pinned in `.tool-versions`. On macOS:
