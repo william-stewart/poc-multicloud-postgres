@@ -1,0 +1,19 @@
+# Checkov configuration shared by pre-commit and `make validate`.
+# Individual exceptions are made inline with `#checkov:skip=<ID>:<reason>`
+# next to the resource, so every accepted risk is documented where it lives.
+directory:
+  - .
+framework:
+  - terraform
+  - kubernetes
+  - helm
+  - kustomize
+  - github_actions
+  - secrets
+skip-path:
+  - \.terraform
+  - \.claude
+  - secrets
+download-external-modules: true
+compact: true
+quiet: true
