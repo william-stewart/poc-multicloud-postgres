@@ -1,1 +1,59 @@
 # poc-multicloud-postgres
+
+A proof of concept for running CloudNativePG across clouds: a primary cluster on
+EKS archives WAL to S3, and a replica cluster on GKE replays it. Both clusters
+run Cilium as the only CNI, with default-deny network policies.
+
+> Work in progress. The full write-up (architecture, trade-offs, evidence) is
+> added once the stack runs end to end.
+
+## Layout
+
+| Path | Tool | Contents |
+| --- | --- | --- |
+| `infra/00-bootstrap/{aws,gcp}` | OpenTofu | Remote state buckets (S3 with native locking, GCS) |
+| `infra/10-network/{aws,gcp}` | OpenTofu | VPCs, subnets, NAT, S3 gateway endpoint |
+| `infra/20-clusters/{aws,gcp}` | OpenTofu | EKS and GKE without a default CNI |
+| `infra/30-data/aws` | OpenTofu | WAL bucket and IAM |
+| `k8s/` | Helm (helmfile) + kustomize | Everything that runs inside a cluster |
+
+OpenTofu manages cloud primitives only. It has no Helm or Kubernetes providers,
+and a pre-commit hook enforces that.
+
+## Address plan
+
+The ranges don't overlap, so a VPN and streaming replication can be added later.
+
+| Network | CIDR |
+| --- | --- |
+| AWS VPC | `10.10.0.0/16` |
+| GCP subnet (nodes) | `10.20.0.0/20` |
+| GKE pods (secondary range) | `10.21.0.0/16` |
+| GKE services (secondary range) | `10.22.0.0/20` |
+
+## Local validation
+
+Tool versions are pinned in `.tool-versions`. On macOS:
+
+```sh
+brew install opentofu trivy gitleaks pre-commit checkov
+brew tap terraform-linters/tap && brew install terraform-linters/tap/tflint
+make hooks      # installs the pre-commit and commit-msg hooks
+make validate   # every local check; no cloud credentials needed
+```
+
+`make validate` runs, without touching any cloud API or state backend:
+
+1. `tofu fmt -check`, then `tofu init -backend=false` and `tofu validate` per stack
+2. `tofu test` with mock providers
+3. `pre-commit run --all-files`: gitleaks, checkov, trivy, tflint, file hygiene,
+   and project guardrails (no `aws_iam_access_key`, no in-cluster providers in OpenTofu)
+4. `gitleaks git` over the full history
+
+Commit messages are checked against Conventional Commits by a `commit-msg` hook.
+
+## Secrets
+
+Nothing secret is ever committed: no cloud keys, kubeconfigs, state or plan
+files, `.tfvars` with credentials, or `.env` files. Anything that has to be saved
+locally goes under `secrets/`, which is gitignored.
