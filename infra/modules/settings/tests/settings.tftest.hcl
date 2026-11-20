@@ -12,6 +12,16 @@ run "default_address_plan_is_valid" {
   }
 
   assert {
+    condition     = alltrue([for z in output.zones.aws : startswith(z, "use1-az")]) && !contains(output.zones.aws, "use1-az3")
+    error_message = "AWS zones must be us-east-1 zone IDs, excluding use1-az3 (no EKS support)."
+  }
+
+  assert {
+    condition     = startswith(output.zones.gcp, output.regions.gcp)
+    error_message = "The GKE zone must be in the GCP region."
+  }
+
+  assert {
     condition     = alltrue([for k, v in output.labels : can(regex("^[a-z][a-z0-9_-]{0,62}$", k)) && can(regex("^[a-z0-9_-]{0,63}$", v))])
     error_message = "Labels must be valid GCP labels (lowercase), which also makes them valid AWS tags."
   }

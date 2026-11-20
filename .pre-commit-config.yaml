@@ -57,14 +57,14 @@ repos:
       - id: tflint
         name: tflint
         language: system
-        entry: bash -c 'tflint --init --config "$PWD/.tflint.hcl" >/dev/null && tflint --recursive --config "$PWD/.tflint.hcl" --format compact'
+        entry: bash -c 'tflint --init --config "$PWD/.tflint.hcl" >/dev/null && tflint --chdir infra --recursive --config "$PWD/.tflint.hcl" --format compact'
         files: \.tf$
         pass_filenames: false
 
       - id: trivy-config
         name: trivy config
         language: system
-        entry: trivy config --quiet --exit-code 1 --severity MEDIUM,HIGH,CRITICAL --skip-dirs "**/.terraform" infra
+        entry: trivy config --quiet --exit-code 1 --severity MEDIUM,HIGH,CRITICAL --skip-dirs "**/.terraform" --skip-dirs "**/.external_modules" infra
         files: \.tf$
         pass_filenames: false
 
