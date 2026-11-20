@@ -1,0 +1,15 @@
+{
+  "description": "Shared interface for the per-cloud network modules. Each subdirectory is one implementation and must declare these inputs (with these types) and outputs. Cloud-specific inputs and outputs are allowed on top.",
+  "inputs": {
+    "name": "string",
+    "region": "string",
+    "cidr": "string",
+    "labels": "map(string)"
+  },
+  "outputs": [
+    "network_id",
+    "network_name",
+    "private_subnet_ids",
+    "nat_egress_ips"
+  ]
+}

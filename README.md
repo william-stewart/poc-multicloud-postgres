@@ -11,6 +11,8 @@ run Cilium as the only CNI, with default-deny network policies.
 
 | Path | Tool | Contents |
 | --- | --- | --- |
+| `infra/modules/settings` | OpenTofu | Values both clouds share: names, regions, zones, address plan, labels |
+| `infra/modules/network/{aws,gcp}` | OpenTofu | One network module per cloud behind a shared interface |
 | `infra/00-bootstrap/{aws,gcp}` | OpenTofu | Remote state buckets (S3 with native locking, GCS) |
 | `infra/10-network/{aws,gcp}` | OpenTofu | VPCs, subnets, NAT, S3 gateway endpoint |
 | `infra/20-clusters/{aws,gcp}` | OpenTofu | EKS and GKE without a default CNI |
@@ -20,9 +22,38 @@ run Cilium as the only CNI, with default-deny network policies.
 OpenTofu manages cloud primitives only. It has no Helm or Kubernetes providers,
 and a pre-commit hook enforces that.
 
+## Shared settings and module interfaces
+
+Two patterns keep the clouds consistent without hiding their differences.
+
+**One settings module.** `infra/modules/settings` has no providers and no
+resources. It returns the values both clouds must agree on: the name prefix,
+regions, zones, address plan and base labels. Every stack calls it, so each value
+is defined once. Validation rejects address ranges that overlap, fall outside
+`10.0.0.0/8`, or have host bits set.
+
+**Matching interfaces, separate implementations.** Each cloud has its own module
+(`infra/modules/network/aws`, `.../gcp`), and each stack picks the one for its
+cloud. There is no `cloud = "aws"` switch inside a module. Both modules declare the
+inputs and outputs listed in `infra/modules/network/contract.json`:
+
+| Inputs | Outputs |
+| --- | --- |
+| `name`, `region`, `cidr`, `labels` | `network_id`, `network_name`, `private_subnet_ids`, `nat_egress_ips` |
+
+Features that exist on only one cloud stay as extra inputs and outputs on that
+module: AWS zone IDs and the S3 gateway endpoint, GCP secondary ranges. A
+pre-commit hook (`scripts/check_module_contracts.py`) fails if an implementation
+is missing a contract input or output, or declares an input with a different type.
+
+This keeps each stack to one provider and one set of credentials, and keeps the
+differences between clouds visible in review. The portability layer is
+Kubernetes, not OpenTofu.
+
 ## Address plan
 
 The ranges don't overlap, so a VPN and streaming replication can be added later.
+They are defined in `infra/modules/settings`.
 
 | Network | CIDR |
 | --- | --- |
@@ -54,6 +85,31 @@ tofu -chdir=infra/00-bootstrap/gcp init && tofu -chdir=infra/00-bootstrap/gcp ap
 tofu -chdir=infra/00-bootstrap/aws output backend_config   # values for later stacks
 ```
 
+## Networks (`infra/10-network`)
+
+| | AWS (`us-east-1`) | GCP (`us-central1`) |
+| --- | --- | --- |
+| Layout | VPC across 3 AZs pinned by zone ID (`use1-az1`, `az2`, `az4`; EKS doesn't support `az3`). A private `/19` per AZ, sized for Cilium ENI-mode pod IPs, and a public `/24` per AZ | Custom-mode VPC with one node subnet, plus secondary ranges for pods and services |
+| Egress | One NAT gateway (PoC; production would use one per AZ) | Cloud NAT on a reserved static IP, for the node subnet only |
+| S3 traffic | Gateway endpoint on the private route tables, so WAL archiving skips the NAT | Through Cloud NAT over HTTPS |
+| Logging | VPC flow logs to CloudWatch, encrypted with a customer-managed KMS key | Subnet flow logs, NAT error logs |
+| Default access | Default security group stripped of all rules | Explicit, logged deny-all ingress firewall rule |
+
+The backends are configured partly at init time, so no account-specific values
+are committed:
+
+```sh
+tofu -chdir=infra/10-network/aws init \
+  -backend-config="bucket=$(tofu -chdir=infra/00-bootstrap/aws output -raw state_bucket)" \
+  -backend-config="region=us-east-1" \
+  -backend-config="kms_key_id=$(tofu -chdir=infra/00-bootstrap/aws output -raw state_kms_key_arn)"
+tofu -chdir=infra/10-network/aws plan
+
+tofu -chdir=infra/10-network/gcp init \
+  -backend-config="bucket=$(tofu -chdir=infra/00-bootstrap/gcp output -raw state_bucket)"
+tofu -chdir=infra/10-network/gcp plan -var project_id=<project>
+```
+
 ## Local validation
 
 Tool versions are pinned in `.tool-versions`. On macOS:
@@ -70,7 +126,8 @@ make validate   # every local check; no cloud credentials needed
 1. `tofu fmt -check`, then `tofu init -backend=false` and `tofu validate` per stack
 2. `tofu test` with mock providers
 3. `pre-commit run --all-files`: gitleaks, checkov, trivy, tflint, file hygiene,
-   and project guardrails (no `aws_iam_access_key`, no in-cluster providers in OpenTofu)
+   and project guardrails (no `aws_iam_access_key`, no in-cluster providers in OpenTofu,
+   per-cloud modules match their shared interface)
 4. `gitleaks git` over the full history
 
 Commit messages are checked against Conventional Commits by a `commit-msg` hook.
