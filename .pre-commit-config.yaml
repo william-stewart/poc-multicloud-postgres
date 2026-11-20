@@ -68,6 +68,13 @@ repos:
         files: \.tf$
         pass_filenames: false
 
+      - id: module-contracts
+        name: per-cloud modules honour their shared interface
+        language: python
+        entry: python scripts/check_module_contracts.py
+        files: ^(infra/modules/|scripts/check_module_contracts\.py$)
+        pass_filenames: false
+
       # Guardrails that encode the project's own rules.
       - id: no-iam-access-keys
         name: no aws_iam_access_key in OpenTofu (keys must never reach state)
