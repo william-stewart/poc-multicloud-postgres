@@ -79,6 +79,21 @@ CI (`.github/workflows/validate.yml`) runs `make validate` on every pull request
 and on pushes to `main`, using the tool versions from `.tool-versions`. It has a
 read-only token and no cloud credentials.
 
+## Branch protection
+
+`main` is protected by two GitHub rulesets, kept as code in `.github/rulesets/`
+and applied with `make rulesets`. That target creates each ruleset, or updates it
+if one with the same name already exists.
+
+- **main: require pull request.** Every change to `main`, including the owner's,
+  goes through a pull request. Force pushes and branch deletion are blocked, and
+  review threads must be resolved. PRs merge with a merge commit or a rebase, never
+  a squash, so the commit history is kept. No reviews are required because a solo
+  owner can't approve their own PR. Nobody can bypass this ruleset.
+- **main: only admins can merge.** Only the repository admin role may update
+  `main`, and only through a pull request. Anyone given write access later can
+  open PRs but can't merge them.
+
 ## Secrets
 
 Nothing secret is ever committed: no cloud keys, kubeconfigs, state or plan
