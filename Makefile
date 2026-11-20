@@ -6,7 +6,7 @@ SHELL := /usr/bin/env bash
 .DEFAULT_GOAL := help
 
 # Every directory under infra/ that holds OpenTofu code is a stack.
-STACKS := $(sort $(patsubst %/,%,$(dir $(shell find infra -name '*.tf' -not -path '*/.terraform/*' 2>/dev/null))))
+STACKS := $(sort $(patsubst %/,%,$(dir $(shell find infra -name '*.tf' -not -path '*/.terraform/*' -not -path '*/.external_modules/*' 2>/dev/null))))
 
 export TF_PLUGIN_CACHE_DIR ?= $(HOME)/.terraform.d/plugin-cache
 export TF_IN_AUTOMATION := 1

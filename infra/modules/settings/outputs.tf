@@ -8,6 +8,11 @@ output "regions" {
   value       = local.regions
 }
 
+output "zones" {
+  description = "Zones per cloud: { aws = [zone IDs], gcp = zone }."
+  value       = local.zones
+}
+
 output "cidrs" {
   description = "Non-overlapping address plan: { aws_vpc, gcp_nodes, gke_pods, gke_services }."
   value       = var.cidrs
