@@ -1,0 +1,95 @@
+name: validate
+
+# Runs the same local-only checks as `make validate`. No cloud credentials are
+# available to this workflow, and none are needed.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: make validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      TF_PLUGIN_CACHE_DIR: ${{ github.workspace }}/../tofu-plugin-cache
+      # Pushes to main arrive through merged PRs; the hook only guards local commits.
+      SKIP: no-commit-to-branch
+    steps:
+      - name: Check out (full history for gitleaks)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Read tool versions from .tool-versions
+        id: versions
+        run: |
+          while read -r tool version; do
+            [ -n "$tool" ] && echo "${tool}=${version}" >> "$GITHUB_OUTPUT"
+          done < .tool-versions
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+
+      - uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
+        with:
+          tofu_version: ${{ steps.versions.outputs.opentofu }}
+          tofu_wrapper: false
+
+      - uses: terraform-linters/setup-tflint@6ffdbaa3be476b3431f7275c26966ef32ff60337 # v6.3.2
+        with:
+          tflint_version: v${{ steps.versions.outputs.tflint }}
+
+      - uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          version: v${{ steps.versions.outputs.trivy }}
+          cache: true
+
+      - name: Install gitleaks (checksum verified)
+        env:
+          GITLEAKS_VERSION: ${{ steps.versions.outputs.gitleaks }}
+          # Bump together with .tool-versions; from the release's checksums.txt.
+          GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+        run: |
+          tarball="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -fsSLo "$RUNNER_TEMP/$tarball" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${tarball}"
+          echo "${GITLEAKS_SHA256}  $RUNNER_TEMP/$tarball" | sha256sum --check --strict
+          tar -xzf "$RUNNER_TEMP/$tarball" -C "$RUNNER_TEMP" gitleaks
+          sudo install -m 0755 "$RUNNER_TEMP/gitleaks" /usr/local/bin/gitleaks
+
+      - name: Install pre-commit
+        env:
+          PRE_COMMIT_VERSION: ${{ steps.versions.outputs.pre-commit }}
+        run: python -m pip install --disable-pip-version-check "pre-commit==${PRE_COMMIT_VERSION}"
+
+      - name: Cache pre-commit environments
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
+
+      - name: Cache OpenTofu providers and tflint plugins
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ${{ env.TF_PLUGIN_CACHE_DIR }}
+            ~/.tflint.d/plugins
+          key: tofu-${{ runner.os }}-${{ hashFiles('**/.terraform.lock.hcl', '.tflint.hcl') }}
+
+      - name: make validate
+        env:
+          # tflint --init downloads rulesets from GitHub; authenticate to avoid rate limits.
+          GITHUB_TOKEN: ${{ github.token }}
+        run: make validate

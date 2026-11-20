@@ -75,6 +75,10 @@ make validate   # every local check; no cloud credentials needed
 
 Commit messages are checked against Conventional Commits by a `commit-msg` hook.
 
+CI (`.github/workflows/validate.yml`) runs `make validate` on every pull request
+and on pushes to `main`, using the tool versions from `.tool-versions`. It has a
+read-only token and no cloud credentials.
+
 ## Secrets
 
 Nothing secret is ever committed: no cloud keys, kubeconfigs, state or plan
