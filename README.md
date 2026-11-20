@@ -13,6 +13,7 @@ run Cilium as the only CNI, with default-deny network policies.
 | --- | --- | --- |
 | `infra/modules/settings` | OpenTofu | Values both clouds share: names, regions, zones, address plan, labels |
 | `infra/modules/network/{aws,gcp}` | OpenTofu | One network module per cloud behind a shared interface |
+| `infra/modules/network-lookup/{aws,gcp}` | OpenTofu | Read-only lookups of those networks, for stacks that keep their own state |
 | `infra/00-bootstrap/{aws,gcp}` | OpenTofu | Remote state buckets (S3 with native locking, GCS) |
 | `infra/10-network/{aws,gcp}` | OpenTofu | VPCs, subnets, NAT, S3 gateway endpoint |
 | `infra/20-clusters/{aws,gcp}` | OpenTofu | EKS and GKE without a default CNI |
@@ -49,6 +50,25 @@ is missing a contract input or output, or declares an input with a different typ
 This keeps each stack to one provider and one set of credentials, and keeps the
 differences between clouds visible in review. The portability layer is
 Kubernetes, not OpenTofu.
+
+## Separate state per layer
+
+Networks and clusters keep separate state, so applying a cluster change can't
+touch the network, and each layer can use its own, narrower IAM role.
+
+Later stacks find the network through **data sources, not
+`terraform_remote_state`**. `infra/modules/network-lookup/{aws,gcp}` look the
+network up by the names from the settings module (on AWS, the VPC `Name` tag and a
+`tier` subnet tag). They return the same four shared outputs as the network modules
+(their own `contract.json`). A stack that only needs subnet IDs therefore needs read
+access in the cloud, but no access to another stack's state file, and isn't tied to
+where that state lives. Tests on both sides pin the GCP naming convention, so a
+rename can't quietly break a lookup.
+
+OpenTofu can't see dependencies between states, so the teardown order matters:
+Kubernetes layer first, then `20-clusters`, then `10-network`. Destroying a
+network while a cluster still exists hangs on the ENIs, load balancers and
+firewall rules that the cluster created.
 
 ## Address plan
 

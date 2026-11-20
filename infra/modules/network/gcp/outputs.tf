@@ -12,12 +12,12 @@ output "network_name" {
 
 output "private_subnet_ids" {
   description = "Subnets for cluster nodes, with no public IPs."
-  value       = [google_compute_subnetwork.nodes.id]
+  value       = tolist([google_compute_subnetwork.nodes.id])
 }
 
 output "nat_egress_ips" {
   description = "Public IPs that outbound traffic from private subnets leaves through."
-  value       = [google_compute_address.nat.address]
+  value       = tolist([google_compute_address.nat.address])
 }
 
 # --- GCP only ---
