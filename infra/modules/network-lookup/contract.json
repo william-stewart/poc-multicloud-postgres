@@ -1,0 +1,13 @@
+{
+  "description": "Read-only lookup of an existing network, for stacks that keep their own state (for example 20-clusters). Each implementation finds the network built by modules/network/<cloud> through data sources and returns the same shared outputs, without reading the network stack's state.",
+  "inputs": {
+    "name": "string",
+    "region": "string"
+  },
+  "outputs": [
+    "network_id",
+    "network_name",
+    "private_subnet_ids",
+    "nat_egress_ips"
+  ]
+}

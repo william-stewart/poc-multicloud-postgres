@@ -37,6 +37,23 @@ run "custom_mode_network" {
   }
 }
 
+# modules/network-lookup/gcp finds these resources by name; its tests pin the
+# same convention, so renaming here must be matched there.
+run "naming_convention_for_lookups" {
+  command = plan
+
+  assert {
+    condition = (
+      google_compute_network.this.name == "test" &&
+      google_compute_subnetwork.nodes.name == "test-nodes" &&
+      google_compute_address.nat.name == "test-nat" &&
+      google_compute_subnetwork.nodes.secondary_ip_range[0].range_name == "test-pods" &&
+      google_compute_subnetwork.nodes.secondary_ip_range[1].range_name == "test-services"
+    )
+    error_message = "Resource names changed; update modules/network-lookup/gcp to match."
+  }
+}
+
 run "ingress_denied_by_default" {
   command = plan
 
