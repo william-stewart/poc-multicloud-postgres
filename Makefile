@@ -56,6 +56,19 @@ secrets-history: ## Scan the full git history for secrets
 pre-commit: ## Run every pre-commit hook (gitleaks, checkov, trivy, tflint, ...) on all files
 	pre-commit run --all-files
 
+.PHONY: rulesets
+rulesets: ## Create or update the GitHub rulesets in .github/rulesets (repo admin only)
+	@repo=$$(gh repo view --json nameWithOwner -q .nameWithOwner); \
+	for f in .github/rulesets/*.json; do \
+	  name=$$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["name"])' "$$f"); \
+	  id=$$(gh api "repos/$$repo/rulesets" --jq ".[] | select(.name == \"$$name\") | .id"); \
+	  if [ -n "$$id" ]; then \
+	    gh api -X PUT "repos/$$repo/rulesets/$$id" --input "$$f" >/dev/null && echo "updated: $$name"; \
+	  else \
+	    gh api -X POST "repos/$$repo/rulesets" --input "$$f" >/dev/null && echo "created: $$name"; \
+	  fi; \
+	done
+
 .PHONY: validate
 validate: tofu-fmt tofu-test pre-commit secrets-history ## Every local check; must pass before a PR
 	@echo "make validate: OK"
