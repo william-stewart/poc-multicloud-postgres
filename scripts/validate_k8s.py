@@ -18,6 +18,12 @@ For each cloud:
      kubeconform against those schemas, Kubernetes 1.36, and a pinned CRD
      catalog as a fallback.
 
+  5. Scan the manifests Flux applies (each cluster's Flux setup and each Flux
+     Kustomization, rendered) with checkov's Kubernetes checks. Scanning the
+     rendered output is deterministic, unlike checkov's own kustomize
+     scanner, whose overlay heuristics don't fit this layout. Accepted
+     findings are recorded as checkov.io/skip annotations on the objects.
+     The charts' own rendered manifests are upstream code and not scanned.
 
 It also checks that bootstrap.sh installs the versions Flux manages, and that
 the Flux images pinned by digest match the generated Flux manifests.
@@ -151,6 +157,33 @@ def kubeconform(manifests: str, label: str, schema_dir: Path, ignore_missing: bo
         cmd.append("-ignore-missing-schemas")
     out = run(cmd, stdin=manifests)
     print(f"  {label}: {out.strip().splitlines()[-1].replace('parsing stdin - ', '')}")
+
+
+def checkov_scan(outputs: dict[str, list[tuple[str, str, bool]]]) -> None:
+    """Run checkov's Kubernetes checks on the manifests Flux applies."""
+    with tempfile.TemporaryDirectory() as tmp:
+        for cloud, items in outputs.items():
+            for i, (label, manifests, from_chart) in enumerate(items):
+                if not from_chart:
+                    (Path(tmp) / f"{cloud}-{i:02d}.yaml").write_text(manifests)
+        # Run outside the repo, so its .checkov.yaml (for OpenTofu) doesn't apply.
+        result = subprocess.run(
+            ["checkov", "-d", ".", "--framework", "kubernetes", "-o", "json"],
+            cwd=tmp, capture_output=True, text=True,
+        )
+    try:
+        report = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        raise Failure(f"checkov didn't produce a report:\n{result.stdout}{result.stderr}") from None
+    results = (report[0] if isinstance(report, list) else report).get("results", {})
+    failed = results.get("failed_checks", [])
+    print(
+        f"checkov on the manifests Flux applies: {len(results.get('passed_checks', []))} passed, "
+        f"{len(failed)} failed, {len(results.get('skipped_checks', []))} skipped (recorded exceptions)"
+    )
+    if failed:
+        lines = [f"  {c['check_id']} {c['resource']}: {c['check_name']}" for c in failed]
+        raise Failure("checkov findings in the manifests Flux applies:\n" + "\n".join(lines))
 
 
 # --- Helm ------------------------------------------------------------------
@@ -390,6 +423,7 @@ def main() -> int:
                 print(f"== {cloud}")
                 for label, manifests, ignore_missing in items:
                     kubeconform(manifests, label, schema_dir, ignore_missing)
+            checkov_scan(outputs)
         check_bootstrap_matches(helm_releases)
     except Failure as e:
         print(f"k8s validation failed:\n{e}", file=sys.stderr)

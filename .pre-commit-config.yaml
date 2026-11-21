@@ -37,6 +37,8 @@ repos:
     hooks:
       - id: checkov
         args: [--config-file, .checkov.yaml]
+        # Checkov supports Python up to 3.13; CI uses 3.13 too.
+        language_version: python3.13
 
   - repo: https://github.com/compilerla/conventional-pre-commit
     rev: 81d3af62ea96a1f69f0cfa8745f253d3c4740896  # frozen: v4.5.0
@@ -83,7 +85,9 @@ repos:
       - id: k8s-validate
         name: k8s manifests and Helm values (kustomize, helm template, kubeconform)
         language: python
-        additional_dependencies: [pyyaml==6.0.4]
+        # Checkov supports Python up to 3.13; its version matches .tool-versions.
+        language_version: python3.13
+        additional_dependencies: [pyyaml==6.0.4, checkov==3.4.6]
         entry: python scripts/validate_k8s.py
         files: ^(k8s/|scripts/validate_k8s\.py$|\.tool-versions$)
         pass_filenames: false
