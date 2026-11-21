@@ -5,6 +5,9 @@ For every infra/modules/<name>/contract.json, each subdirectory of
 infra/modules/<name>/ that contains .tf files is an implementation. It must
 declare every contract input (with the same type) and every contract output.
 Implementations may declare extra, cloud-specific inputs and outputs.
+
+This only checks declarations. infra/tests/contracts checks the values the
+outputs actually produce (types, emptiness, format) with `tofu test`.
 """
 
 from __future__ import annotations

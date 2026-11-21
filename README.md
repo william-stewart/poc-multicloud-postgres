@@ -43,9 +43,17 @@ inputs and outputs listed in `infra/modules/network/contract.json`:
 | `name`, `region`, `cidr`, `labels` | `network_id`, `network_name`, `private_subnet_ids`, `nat_egress_ips` |
 
 Features that exist on only one cloud stay as extra inputs and outputs on that
-module: AWS zone IDs and the S3 gateway endpoint, GCP secondary ranges. A
-pre-commit hook (`scripts/check_module_contracts.py`) fails if an implementation
-is missing a contract input or output, or declares an input with a different type.
+module: AWS zone IDs and the S3 gateway endpoint, GCP secondary ranges.
+
+Two checks enforce the interface, and each catches what the other can't:
+
+| Check | What it verifies | How |
+| --- | --- | --- |
+| `scripts/check_module_contracts.py` (pre-commit hook) | Every contract input and output is **declared**, and input types match | Reads the `.tf` files; no providers needed |
+| `infra/tests/contracts` (`tofu test`) | The outputs' **values** have the contracted shape: `network_id` a non-empty string, `private_subnet_ids` a list (not a tuple) of strings, `nat_egress_ips` a list of IPv4 addresses | Runs each implementation against mock providers |
+
+This contract format and checker are specific to this repo, not an industry
+standard. OpenTofu has no built-in notion of a module interface.
 
 This keeps each stack to one provider and one set of credentials, and keeps the
 differences between clouds visible in review. The portability layer is
