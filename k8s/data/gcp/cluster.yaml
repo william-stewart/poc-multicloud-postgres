@@ -54,6 +54,18 @@ spec:
       parameters:
         barmanObjectName: gcs-store
 
+  # A service account token for AWS STS, separate from the one for the
+  # Kubernetes API: audience sts.amazonaws.com, valid for an hour, rotated by
+  # the kubelet. The reader role in infra/30-data/aws trusts only this
+  # audience and pg-replica's service account. Mounted at /projected, and the
+  # Barman Cloud sidecar inherits the mount (see aws-store-ro).
+  projectedVolumeTemplate:
+    sources:
+      - serviceAccountToken:
+          audience: sts.amazonaws.com
+          expirationSeconds: 3600
+          path: aws-sts-token
+
   # The instances (and the plugin's sidecar) run as the pg-replica service
   # account, which Workload Identity maps to the writer in infra/30-data/gcp.
   serviceAccountTemplate:

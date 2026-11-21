@@ -1,6 +1,5 @@
 # GKE: the shared rules plus traffic between pg-replica's own instances, and
-# its own archive in GCS through Workload Identity. No AWS STS: the replica
-# reads S3 with static, read-only keys.
+# its own archive in GCS through Workload Identity.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:

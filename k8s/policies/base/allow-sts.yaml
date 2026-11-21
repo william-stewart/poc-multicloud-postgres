@@ -1,6 +1,7 @@
-# Rule 6: IRSA exchanges the service account token for AWS credentials at STS.
-# EKS injects AWS_STS_REGIONAL_ENDPOINTS=regional; the global endpoint is kept
-# for SDKs that ignore it. EKS and the WAL bucket share one region (settings).
+# Rule 6: AWS STS, where database pods exchange a service account token for
+# short-lived AWS credentials: IRSA's writer role on EKS, the federated reader
+# role on GKE. Both set AWS_STS_REGIONAL_ENDPOINTS=regional; the global
+# endpoint is kept for SDKs that ignore it. The STS region is the bucket's.
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:

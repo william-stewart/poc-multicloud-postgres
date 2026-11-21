@@ -11,8 +11,8 @@
 #   k8s/data-vars.sh <aws|gcp> <kube-context>
 #
 # It refuses to run until the database can start: the app owner credentials
-# must be in the cluster. On GCP the S3 reader credentials must be too (make
-# replica-credentials), and the primary's first base backup must be in S3.
+# must be in the cluster, and on GCP the primary's first base backup must be
+# in S3.
 set -euo pipefail
 
 usage() {
@@ -57,10 +57,6 @@ case $cloud in
   gcp)
     require_tools aws
     bucket=$(tofu -chdir=infra/30-data/aws output -raw wal_bucket)
-    if ! kc --namespace cnpg-db get secret aws-s3-reader >/dev/null 2>&1; then
-      echo "cnpg-db/aws-s3-reader is missing; run make replica-credentials first" >&2
-      exit 1
-    fi
     # The replica bootstraps from a base backup; without one it fails.
     if [[ -z $(aws s3api list-objects-v2 --bucket "$bucket" --prefix pg-primary/base/ \
       --max-items 1 --query 'Contents[].Key' --output text | grep -v '^None$' || true) ]]; then
@@ -70,6 +66,7 @@ case $cloud in
     {
       echo "WAL_BUCKET=$bucket"
       echo "WAL_BUCKET_REGION=$(tofu -chdir=infra/30-data/aws output -raw wal_bucket_region)"
+      echo "WAL_READER_ROLE_ARN=$(tofu -chdir=infra/30-data/aws output -raw wal_reader_role_arn)"
       echo "GCS_WAL_BUCKET=$(tofu -chdir=infra/30-data/gcp output -raw wal_bucket)"
       echo "GCS_WAL_WRITER_SA=$(tofu -chdir=infra/30-data/gcp output -raw wal_writer_service_account)"
     } >"$vars"

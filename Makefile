@@ -72,14 +72,6 @@ app-credentials: ## Store the same app owner credentials on both clusters: EKS=<
 	fi
 	k8s/app-credentials.sh "$(EKS)" "$(GKE)"
 
-.PHONY: replica-credentials
-replica-credentials: ## Create or rotate the GKE replica's read-only S3 key, stored only in the cluster: CONTEXT=<gke-context>
-	@if [ -z "$(CONTEXT)" ]; then \
-	  echo "usage: make replica-credentials CONTEXT=<gke-kube-context>" >&2; \
-	  exit 2; \
-	fi
-	k8s/replica-credentials.sh "$(CONTEXT)"
-
 .PHONY: flux-manifests
 flux-manifests: ## Regenerate k8s/flux/gotk-components.yaml with the pinned flux CLI
 	flux install --export > k8s/flux/gotk-components.yaml

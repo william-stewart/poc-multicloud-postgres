@@ -11,5 +11,6 @@ resources:
   - allow-kube-apiserver.yaml
   - allow-operator-and-probes.yaml
   - allow-s3.yaml
+  - allow-sts.yaml
   - app-namespace.yaml
   - allow-app-to-primary.yaml

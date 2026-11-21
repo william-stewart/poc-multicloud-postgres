@@ -33,7 +33,7 @@ flowchart LR
   app -- "5432 only" --> primary
   primary -- "WAL every ≤60s + base backups<br/>IRSA writer role" --> vpce
   vpce --> s3
-  s3 -- "read-only HTTPS<br/>static key, this IP only" --> nat
+  s3 -- "read-only HTTPS, this IP only<br/>role via GKE's OIDC issuer, no key" --> nat
   nat --> replica
   replica -- "every replayed WAL + base backups<br/>Workload Identity, no key" --> gcs
   app2 -- "5432 only<br/>read-only until promoted" --> replica
@@ -55,7 +55,7 @@ layer below it by name, so the order matters in both directions.
 | 3 | Clusters | `tofu apply` | 12–15 min (EKS) |
 | 4 | Platform: Cilium, CoreDNS, Flux, then Flux installs the rest | `make bootstrap` | 5–8 min |
 | 5 | Archives: S3 and GCS buckets, IAM, Workload Identity Federation | `tofu apply` | 2–3 min |
-| 6 | Credentials: the app owner on both clusters, the S3 reader key on GKE | `make app-credentials`, `make replica-credentials` | 1 min |
+| 6 | Credentials: the app owner on both clusters | `make app-credentials` | 1 min |
 | 7 | Primary on EKS: network policies, then the database | `make data-vars` | 5 min + first backup |
 | 8 | Replica on GKE: network policies, then the database | `make data-vars` | 5 min + first backup |
 
@@ -163,23 +163,26 @@ cilium --context "$GKE" status --wait
 
 ```sh
 aws_init 30-data/aws && tofu -chdir=infra/30-data/aws apply \
-  -var "replica_egress_ips=$(tofu -chdir=infra/10-network/gcp output -json nat_egress_ips)"
+  -var "replica_egress_ips=$(tofu -chdir=infra/10-network/gcp output -json nat_egress_ips)" \
+  -var gke_oidc_issuer_url="$(tofu -chdir=infra/20-clusters/gcp output -raw oidc_issuer_url)"
 gcp_init 30-data/gcp && tofu -chdir=infra/30-data/gcp apply -var project_id="$GCP_PROJECT" \
   -var eks_oidc_issuer_url="$(tofu -chdir=infra/20-clusters/aws output -raw oidc_issuer_url)"
 ```
 
-`infra/30-data/aws` creates the S3 bucket, `pg-primary`'s writer role (IRSA) and the
-replica's read-only IAM user. `infra/30-data/gcp` creates the GCS bucket, a Google
-service account that only `cnpg-db/pg-replica` can use (Workload Identity), and a
-Workload Identity Federation provider that trusts the EKS cluster's OIDC issuer, so
-`cnpg-db/pg-primary` can read the GCS bucket with no key. Both clusters need both
-archives: each one reads the other's to change roles.
+`infra/30-data/aws` creates the S3 bucket, `pg-primary`'s writer role (IRSA), and a
+read-only role that `cnpg-db/pg-replica` assumes with a GKE service account token,
+through an IAM OIDC provider that trusts the GKE cluster's issuer. `infra/30-data/gcp`
+creates the GCS bucket, a Google service account that only `cnpg-db/pg-replica` can use
+(Workload Identity), and a Workload Identity Federation provider that trusts the EKS
+cluster's OIDC issuer, so `cnpg-db/pg-primary` can read the GCS bucket. Each stack
+trusts the other cloud's cluster issuer, so no identity in either cloud has a
+long-lived key. Both clusters need both archives: each one reads the other's to change
+roles.
 
 ### 6. Credentials
 
 ```sh
 make app-credentials EKS="$EKS" GKE="$GKE"
-make replica-credentials CONTEXT="$GKE"
 ```
 
 `make app-credentials` stores the same `app` owner credentials on both clusters, as
@@ -188,11 +191,6 @@ databases bootstrap with, and `app/postgres`, which clients in the `app` namespa
 connect with (host `pg-primary-rw` on EKS, `pg-replica-rw` on GKE). The password is
 generated once and goes straight into the Kubernetes API. Because it runs while both
 clusters are up, GKE already holds the credentials if AWS is lost.
-
-`make replica-credentials` creates the read-only IAM user's access key and stores it,
-with the bucket region, in the `cnpg-db/aws-s3-reader` Secret. The key goes straight
-from the AWS API to the Kubernetes API: no file, no git, no OpenTofu state. Running it
-again rotates the key.
 
 ### 7. Primary on EKS
 
@@ -225,8 +223,8 @@ make data-vars CLOUD=gcp CONTEXT="$GKE"
 kubectl --context "$GKE" -n cnpg-db get cluster pg-replica -w
 ```
 
-`make data-vars CLOUD=gcp` refuses to run until the S3 reader's Secret exists and the
-primary's first base backup is in S3, because the replica can't bootstrap without one.
+`make data-vars CLOUD=gcp` refuses to run until the primary's first base backup is in
+S3, because the replica can't bootstrap without one.
 Once the replica is ready it takes its first base backup to GCS; wait for it to reach
 `completed` (`kubectl --context "$GKE" -n cnpg-db get backup`).
 
@@ -396,12 +394,13 @@ kubectl --context "$GKE" -n cnpg-db delete cluster pg-replica
 kubectl --context "$EKS" -n cnpg-db delete cluster pg-primary
 kubectl --context "$EKS" get pv; kubectl --context "$GKE" get pv   # wait until empty
 
-# 2. Cloud resources, top layer first. 30-data empties the buckets and removes the
-#    reader user together with the access key created in step 6.
+# 2. Cloud resources, top layer first. 30-data empties the buckets and removes
+#    the cross-cloud trust (the IAM OIDC provider and the GCP federation provider).
 tofu -chdir=infra/30-data/gcp destroy -var project_id="$GCP_PROJECT" \
   -var eks_oidc_issuer_url="$(tofu -chdir=infra/20-clusters/aws output -raw oidc_issuer_url)"
 tofu -chdir=infra/30-data/aws destroy \
-  -var "replica_egress_ips=$(tofu -chdir=infra/10-network/gcp output -json nat_egress_ips)"
+  -var "replica_egress_ips=$(tofu -chdir=infra/10-network/gcp output -json nat_egress_ips)" \
+  -var gke_oidc_issuer_url="$(tofu -chdir=infra/20-clusters/gcp output -raw oidc_issuer_url)"
 tofu -chdir=infra/20-clusters/gcp destroy -var project_id="$GCP_PROJECT" -var "api_allowed_cidrs=[\"$MY_IP\"]"
 tofu -chdir=infra/20-clusters/aws destroy -var "api_allowed_cidrs=[\"$MY_IP\"]"
 tofu -chdir=infra/10-network/gcp destroy -var project_id="$GCP_PROJECT"
@@ -454,7 +453,7 @@ different `serverName`, or a new bucket), never back into `pg-replica/` or `pg-p
 | Identity | Can | Only |
 | --- | --- | --- |
 | WAL writer (IRSA, `cnpg-db/pg-primary`) | List, read, write, delete | `pg-primary/`, through the VPC's S3 gateway endpoint; the KMS key through S3 |
-| WAL reader (IAM user, GKE) | List, read | `pg-primary/`, from the GCP Cloud NAT IP; decrypt through S3 |
+| WAL reader (IAM role, `cnpg-db/pg-replica` on GKE through its OIDC issuer) | List, read | `pg-primary/`, from the GCP Cloud NAT IP; decrypt through S3; only tokens with the `sts.amazonaws.com` audience |
 | GCS WAL writer (Workload Identity, `cnpg-db/pg-replica`) | List, read, write, delete objects; read bucket metadata | The GCS WAL bucket; no project-level roles |
 | GCS WAL reader (Workload Identity Federation, `cnpg-db/pg-primary` on EKS) | List, read objects; read bucket metadata | The GCS WAL bucket; only tokens from this EKS cluster's issuer for this service account |
 | Cilium operator (IRSA) | The ENI calls in Cilium's docs | This account and region |
@@ -463,8 +462,11 @@ different `serverName`, or a new bucket), never back into `pg-replica/` or `pg-p
 Kubernetes Secrets are encrypted with customer-managed KMS keys on both clouds. The
 public API endpoints accept only `api_allowed_cidrs`, nodes have no public IPs, and nodes run
 hardened container OSes (Bottlerocket with no SSH or SSM and kernel lockdown;
-Container-Optimized OS with Shielded VM). The reader's static key is the known weak
-spot; Workload Identity Federation from GKE to an AWS role would remove it.
+Container-Optimized OS with Shielded VM). No identity has a long-lived key: every
+credential is a service account token exchanged for short-lived cloud credentials,
+within its own cloud (IRSA, GKE Workload Identity) or across (an IAM OIDC provider for
+GKE's issuer, GCP Workload Identity Federation for EKS's). A pre-commit hook rejects
+`aws_iam_access_key` in OpenTofu.
 
 **Network policies.** Every pod in `cnpg-db` starts from default deny, and Cilium
 rules open only these flows. Flux applies them before the databases (the `data` layer
@@ -477,7 +479,7 @@ depends on `policies`), so no database pod ever runs unprotected:
 | 3 | Ingress | CNPG operator → instances; kubelet probes | 8000, 5432 | Both |
 | 4 | Both | Instance ↔ instance of the same cluster | 5432, 8000 | Both |
 | 5 | Egress | Database pods → the bucket's regional S3 endpoints, by name | 443 | Both |
-| 6 | Egress | Database pods → STS (IRSA) | 443 | EKS |
+| 6 | Egress | Database pods → AWS STS (IRSA on EKS, web identity on GKE) | 443 | Both |
 | 7 | Ingress | Namespace `app` → the cluster's current (or designated) primary only | 5432 | Both |
 | 8 | Egress | Database pods → `storage.googleapis.com` | 443 | GKE |
 | 9 | Egress | Database pods → GKE metadata server (Workload Identity tokens) | 80 | GKE |
@@ -507,7 +509,7 @@ stack's state file.
 | `infra/00-bootstrap/{aws,gcp}` | State buckets and long-lived KMS keys |
 | `infra/10-network/{aws,gcp}` | VPCs, subnets, NAT, S3 gateway endpoint, firewall |
 | `infra/20-clusters/{aws,gcp}` | EKS and GKE without a default CNI; IRSA roles |
-| `infra/30-data/aws` | S3 WAL bucket, KMS key, writer role, reader user |
+| `infra/30-data/aws` | S3 WAL bucket, KMS key, writer role, and the GKE reader role through an IAM OIDC provider |
 | `infra/30-data/gcp` | GCS WAL bucket for the replica's own archive, its Workload Identity writer, and the EKS reader through Workload Identity Federation |
 | `infra/tests/contracts` | Contract tests for the per-cloud modules |
 | `k8s/flux` | Flux controllers (generated, images pinned by digest) |
@@ -515,7 +517,7 @@ stack's state file.
 | `k8s/platform` | Cilium, CoreDNS, cert-manager, CloudNativePG, Barman plugin, EBS CSI |
 | `k8s/data` | The PostgreSQL clusters, object stores and backups |
 | `k8s/policies` | Default deny and Cilium allow rules for `cnpg-db` |
-| `k8s/*.sh` | `bootstrap.sh`, `data-vars.sh`, `app-credentials.sh`, `replica-credentials.sh` (run through `make`) |
+| `k8s/*.sh` | `bootstrap.sh`, `data-vars.sh`, `app-credentials.sh` (run through `make`) |
 
 ## Local validation
 
@@ -547,8 +549,6 @@ token and no cloud credentials.
 
 ## Known gaps and next steps
 
-- Replace the replica's static IAM key with Workload Identity Federation from GKE to an
-  AWS role.
 - HA VPN and streaming replication, for lag under a minute.
 - Run the switchover, failover and failback drills on live clusters, and record RTO
   and RPO. None of them has been run yet.

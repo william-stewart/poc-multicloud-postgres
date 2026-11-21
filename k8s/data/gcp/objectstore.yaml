@@ -1,6 +1,7 @@
-# Read-only view of the primary's archive in S3. The reader IAM user can only
-# list and read pg-primary/, only from GCP's Cloud NAT IP, so this store can't
-# be used to write or delete anything.
+# Read-only view of the primary's archive in S3. pg-replica assumes the reader
+# role in infra/30-data/aws with its own service account token (no key), and
+# the role can only list and read pg-primary/, only from GCP's Cloud NAT IP,
+# so this store can't be used to write or delete anything.
 apiVersion: barmancloud.cnpg.io/v1
 kind: ObjectStore
 metadata:
@@ -18,17 +19,26 @@ spec:
       limits:
         cpu: 100m
         memory: 128Mi
+    # AWS's standard web identity settings, which the SDK in the sidecar picks
+    # up on its own: it exchanges the token at STS for the reader role's
+    # short-lived credentials, and refreshes them as the token rotates. The
+    # token is projected by pg-replica (cluster.yaml) and the sidecar inherits
+    # the postgres container's mounts.
+    env:
+      - name: AWS_ROLE_ARN
+        value: ${WAL_READER_ROLE_ARN}
+      - name: AWS_WEB_IDENTITY_TOKEN_FILE
+        value: /projected/aws-sts-token
+      - name: AWS_ROLE_SESSION_NAME
+        value: pg-replica
+      - name: AWS_STS_REGIONAL_ENDPOINTS
+        value: regional
+      - name: AWS_REGION
+        value: ${WAL_BUCKET_REGION}
+      - name: AWS_DEFAULT_REGION
+        value: ${WAL_BUCKET_REGION}
   configuration:
     destinationPath: s3://${WAL_BUCKET}/
-    # Created by `make replica-credentials` straight from
-    # `aws iam create-access-key`; never written to disk or git.
     s3Credentials:
-      accessKeyId:
-        name: aws-s3-reader
-        key: ACCESS_KEY_ID
-      secretAccessKey:
-        name: aws-s3-reader
-        key: ACCESS_SECRET_KEY
-      region:
-        name: aws-s3-reader
-        key: REGION
+      # No key: the SDK's default chain, which finds the settings above.
+      inheritFromIAMRole: true
