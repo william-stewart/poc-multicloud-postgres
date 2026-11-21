@@ -7,8 +7,8 @@ from this repo.
 
 ```mermaid
 flowchart LR
-  subgraph AWS["AWS us-east-1 · VPC 10.10.0.0/16"]
-    subgraph EKS["EKS 1.36 · Bottlerocket nodes<br/>Cilium ENI mode + kube-proxy replacement<br/>no VPC CNI, no kube-proxy"]
+  subgraph AWS["AWS · us-east-1 · VPC 10.10.0.0/16"]
+    subgraph EKS["EKS 1.36 · Bottlerocket · Cilium only (no VPC CNI, no kube-proxy)"]
       app["namespace app"]
       primary[("pg-primary<br/>2 instances · cnpg-db<br/>default deny + allow rules")]
     end
@@ -17,8 +17,8 @@ flowchart LR
 
   s3[("S3 bucket · pg-primary/<br/>base backups + WAL<br/>versioned · KMS-encrypted · TLS only")]
 
-  subgraph GCP["GCP us-central1 · nodes 10.20.0.0/20"]
-    subgraph GKE["GKE 1.36 (zonal) · COS nodes<br/>Cilium, legacy datapath<br/>no inbound path from AWS"]
+  subgraph GCP["GCP · us-central1 · nodes 10.20.0.0/20"]
+    subgraph GKE["GKE 1.36 · COS · Cilium only"]
       replica[("pg-replica<br/>1 instance · cnpg-db<br/>replays WAL from S3<br/>default deny + allow rules")]
     end
     nat["Cloud NAT<br/>reserved IP"]
@@ -27,8 +27,8 @@ flowchart LR
   app -- "5432 only" --> primary
   primary -- "WAL every ≤60s + base backups<br/>IRSA writer role" --> vpce
   vpce --> s3
-  replica -- "read-only HTTPS<br/>static key" --> nat
-  nat -- "reader allowed only from this IP" --> s3
+  s3 -- "read-only HTTPS<br/>static key, this IP only" --> nat
+  nat --> replica
 ```
 
 There is no network path between the clouds, so there is no VPN. The replica's lag is
