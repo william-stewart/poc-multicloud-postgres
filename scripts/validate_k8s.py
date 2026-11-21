@@ -26,6 +26,10 @@ For each cloud:
      findings are recorded as checkov.io/skip annotations on the objects.
      The charts' own rendered manifests are upstream code and not scanned.
 
+It also renders the end-to-end test's overlays (test/e2e/manifests), which
+adapt k8s/data to a local cluster, and validates them strictly the same way,
+so a change in k8s/data that breaks the end-to-end test fails here first.
+
 It also checks that bootstrap.sh installs the versions Flux manages, and that
 the Flux images pinned by digest match the generated Flux manifests.
 
@@ -556,6 +560,19 @@ def render_cloud(
     return outputs
 
 
+E2E_OVERLAYS = ("s3", "primary", "replica", "restore")
+
+
+def check_e2e_overlays(schema_dir: Path) -> None:
+    """The end-to-end overlays still build against k8s/data and fit the CRDs."""
+    print("== test/e2e")
+    for name in E2E_OVERLAYS:
+        manifests = run(["kustomize", "build", str(ROOT / "test" / "e2e" / "manifests" / name)])
+        if "${" in manifests:
+            raise Failure(f"test/e2e/manifests/{name} still has ${{VARS}} after rendering; emulate them in test/e2e/manifests/emulate")
+        kubeconform(manifests, f"test/e2e/{name}", schema_dir)
+
+
 def main() -> int:
     try:
         check_flux_version()
@@ -574,6 +591,7 @@ def main() -> int:
                 for label, manifests, ignore_missing in items:
                     kubeconform(manifests, label, schema_dir, ignore_missing)
             checkov_scan(outputs)
+            check_e2e_overlays(schema_dir)
         check_bootstrap_matches(helm_releases)
     except Failure as e:
         print(f"k8s validation failed:\n{e}", file=sys.stderr)
