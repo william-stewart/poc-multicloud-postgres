@@ -80,9 +80,15 @@ apply_flux_configmap cluster-vars "$vars"
 echo "==> Cilium $CILIUM_VERSION"
 render k8s/platform/base/cilium/values.yaml "$workdir/cilium-base.yaml"
 render "k8s/platform/$cloud/cilium-values.yaml" "$workdir/cilium-cloud.yaml"
+# No --wait: it would wait for every resource in the release, including
+# Hubble Relay, which finds its peers by DNS name. On EKS there is no DNS until
+# CoreDNS is installed below, so waiting here can time out. Wait only
+# for what the next steps need: the agents (the CNI) and the operator (ENI IPs).
 helm upgrade --install cilium cilium --repo https://helm.cilium.io --version "$CILIUM_VERSION" \
   --kube-context "$context" --namespace kube-system \
-  -f "$workdir/cilium-base.yaml" -f "$workdir/cilium-cloud.yaml" --wait --timeout 10m
+  -f "$workdir/cilium-base.yaml" -f "$workdir/cilium-cloud.yaml"
+kc --namespace kube-system rollout status daemonset/cilium --timeout=10m
+kc --namespace kube-system rollout status deployment/cilium-operator --timeout=5m
 
 echo "==> Waiting for nodes to become Ready"
 kc wait --for=condition=Ready nodes --all --timeout=10m
@@ -93,6 +99,10 @@ if [[ $cloud == aws ]]; then
   helm upgrade --install coredns coredns --repo https://coredns.github.io/helm --version "$COREDNS_VERSION" \
     --kube-context "$context" --namespace kube-system -f "$workdir/coredns.yaml" --wait --timeout 5m
 fi
+
+# With DNS available, Hubble Relay can reach the agents.
+echo "==> Waiting for Hubble Relay"
+kc --namespace kube-system rollout status deployment/hubble-relay --timeout=5m
 
 echo "==> Flux"
 flux create secret git flux-system --context "$context" --namespace flux-system \
