@@ -416,6 +416,18 @@ def check_postgres_images(clusters: list[tuple[str, dict]]) -> None:
         print(f"CloudNativePG Clusters share one digest-pinned PostgreSQL image ({len(images)})")
 
 
+def fully_fenced(cluster: dict) -> bool:
+    """Whether every instance of a CloudNativePG Cluster is fenced."""
+    annotation = (cluster.get("metadata", {}).get("annotations") or {}).get("cnpg.io/fencedInstances")
+    if annotation is None:
+        return False
+    try:
+        fenced = json.loads(annotation)
+    except json.JSONDecodeError as e:
+        raise Failure(f"Cluster {cluster['metadata']['name']}: cnpg.io/fencedInstances isn't a JSON list: {e}") from e
+    return isinstance(fenced, list) and "*" in fenced
+
+
 def check_distributed_topology(clusters: list[tuple[str, dict]]) -> None:
     """The CloudNativePG Clusters form one consistent distributed topology.
 
@@ -423,6 +435,9 @@ def check_distributed_topology(clusters: list[tuple[str, dict]]) -> None:
     serverName), replays from another member, and at most one names itself
     the primary. Two self-declared primaries would be two timelines: split
     brain. During a switchover both may name the other, which is safe.
+    A Cluster fenced in full (cnpg.io/fencedInstances: '["*"]') runs no
+    PostgreSQL, so it doesn't count: after an unplanned failover the old
+    primary is fenced, not demoted, because demoting it would restart it.
     """
     if len(clusters) < 2:
         return
@@ -446,7 +461,7 @@ def check_distributed_topology(clusters: list[tuple[str, dict]]) -> None:
             raise Failure(f"{label}: externalClusters must list exactly {sorted(names)}, found {sorted(external)}")
         if mismatched := sorted(n for n, server in external.items() if server != n):
             raise Failure(f"{label}: externalClusters {mismatched} must read the archive under their own name (serverName)")
-        if replica["primary"] == me:
+        if replica["primary"] == me and not fully_fenced(cluster):
             primaries.append(label)
         elif "promotionToken" in replica:
             raise Failure(f"{label}: promotionToken only belongs on the cluster being promoted, but replica.primary is {replica['primary']}")

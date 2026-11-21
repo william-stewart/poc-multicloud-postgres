@@ -479,10 +479,10 @@ test_unplanned_failover() {
     sleep 1
   done
   start=$(now)
-  # The runbook's single commit: fence and demote pg-primary, promote
-  # pg-replica with no token.
+  # The runbook's single commit: fence pg-primary (not demote: demoting
+  # restarts it, and the restart lifts the fence), promote pg-replica with no
+  # token.
   kc -n "$NS" annotate cluster pg-primary 'cnpg.io/fencedInstances=["*"]' --overwrite >/dev/null
-  set_replica pg-primary '{"primary":"pg-replica","promotionToken":null}'
   set_replica pg-replica '{"primary":"pg-replica","promotionToken":null}'
   require "pg-replica promoted without a token" 900 writable pg-replica
   record "failover to pg-replica" PASS "$(since "$start")s"
@@ -495,6 +495,14 @@ test_unplanned_failover() {
     record "fenced pg-primary refuses connections" PASS
   else
     record "fenced pg-primary refuses connections" FAIL "still answering after 120s"
+  fi
+  # The fence must hold, not only take effect: nothing may lift it later.
+  sleep 60
+  if [[ $(kc -n "$NS" get cluster pg-primary -o jsonpath='{.metadata.annotations.cnpg\.io/fencedInstances}') == '["*"]' ]] &&
+    primary_fenced; then
+    record "fence still holds 60s later" PASS
+  else
+    record "fence still holds 60s later" FAIL "annotation removed or pg-primary answering again"
   fi
   if mark pg-replica after-failover; then
     record "pg-replica takes writes" PASS

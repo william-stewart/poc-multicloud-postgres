@@ -248,7 +248,7 @@ E2E_KEEP=1 make e2e         # leave it running for inspection; make e2e-clean re
 | 3 | Kill the primary pod | The other instance takes writes; no committed row is lost; archiving continues | Failover time |
 | 4 | Object store outage | Writes continue; CloudNativePG reports archiving failing; the replica catches up afterwards | Time to detect, time to catch up |
 | 5 | Planned switchover and back | Promotion tokens, no row lost, replication in both directions | Switchover time each way |
-| 6 | Unplanned failover | The fenced primary refuses connections; `pg-replica` takes writes | Failover time, rows lost (RPO) |
+| 6 | Unplanned failover | The fenced primary refuses connections, and still does 60s later; `pg-replica` takes writes | Failover time, rows lost (RPO) |
 
 Each run writes its results to `evidence/e2e/<UTC time>.md`; commit that file as the
 record of the run. A failed run also saves cluster state and logs under
@@ -317,7 +317,8 @@ kubectl --context "$GKE" run nettest --rm -it --restart=Never -n app --image=pos
 `spec.replica.primary` names the one primary. Every role change is a commit to
 `replica.primary` in `k8s/data/aws/cluster.yaml` and `k8s/data/gcp/cluster.yaml`, which
 Flux applies. `make validate` rejects any commit in which both name themselves the
-primary.
+primary, unless one of them is fenced in full (see
+[Unplanned failover](#unplanned-failover-aws-is-lost)).
 
 This replaces the plain `replica.enabled: false` promotion: with it, the operator
 demotes the old primary cleanly and hands over a promotion token, so a planned
@@ -353,8 +354,11 @@ old `promotionToken` in the commit that demotes `pg-replica` again.
 1. **Promote `pg-replica` and fence `pg-primary`, in one commit:**
    - `k8s/data/gcp/cluster.yaml`: `replica.primary: pg-replica`, with no token. It
      promotes at once, at the last WAL it replayed.
-   - `k8s/data/aws/cluster.yaml`: `replica.primary: pg-replica`, and the annotation
-     `cnpg.io/fencedInstances: '["*"]'` on `pg-primary`.
+   - `k8s/data/aws/cluster.yaml`: only the annotation
+     `cnpg.io/fencedInstances: '["*"]'` on `pg-primary`. Leave `replica.primary`
+     as it is: demoting `pg-primary` restarts it, and CloudNativePG lifts the fence
+     during that restart (`make e2e` showed it). `make validate` accepts both
+     clusters naming themselves the primary only while one is fenced in full.
 
 2. **Move clients** to the `app` namespace on GKE, as above.
 
@@ -363,8 +367,9 @@ up to `archive_timeout` (60s) plus however far the replica was behind.
 
 **Fencing.** When EKS comes back, Flux's first reconcile applies the fence, and
 CloudNativePG stops PostgreSQL in every `pg-primary` instance: it accepts no
-connections and archives nothing more. Demotion alone isn't enough, because a primary
-that was failed over without a token has diverged and can't follow the new one.
+connections and archives nothing more. Demotion wouldn't help, because a primary
+that was failed over without a token has diverged and can't follow the new one, and
+it lifts the fence.
 What this doesn't cover is the gap between EKS returning and Flux reconciling: the old
 instances can start as primary for that window. Anything written then is lost, but it
 only ever reaches `pg-primary/` in S3, never `pg-replica`'s archive, so the new
@@ -394,7 +399,7 @@ aws s3 mv --recursive "s3://$bucket/pg-primary/" "s3://$bucket/pg-primary-diverg
 
 4. Commit to `k8s/data/aws/cluster.yaml`: replace `bootstrap.initdb` with
    `bootstrap.recovery` from `pg-replica` (same `database`, `owner` and `secret`),
-   remove the fence annotation, and keep `replica.primary: pg-replica`.
+   remove the fence annotation, and set `replica.primary: pg-replica`.
 5. `flux --context "$EKS" resume kustomization data`. `pg-primary` is recreated from
    GCS as a replica of `pg-replica`.
 6. Once it has caught up, run a planned switchover back to AWS. Then restore
