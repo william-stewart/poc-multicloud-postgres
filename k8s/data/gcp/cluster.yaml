@@ -38,8 +38,9 @@ spec:
 
   storage:
     size: 10Gi
-    # GKE's default class: Persistent Disk (pd-balanced), encrypted at rest.
-    storageClass: standard-rwo
+    # pd-balanced, encrypted at rest, kept when the PVC is deleted
+    # (k8s/platform/gcp/storageclass.yaml).
+    storageClass: pd-balanced-retain
 
   resources:
     requests:

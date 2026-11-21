@@ -226,12 +226,21 @@ Tear down in reverse. The order is required, not just tidy:
 
 - Each stack looks up the one below it, so `30-data` must go before `20-clusters`, and
   `20-clusters` before `10-network`.
-- Deleting a cluster before its databases leaves their EBS and Persistent Disk volumes
-  behind, still billed.
+- The database StorageClasses keep their volumes (`reclaimPolicy: Retain`), so that no
+  mistake deletes data. Tearing down is the one time you want the volumes gone: switch
+  them to `Delete` first, or the EBS and Persistent Disk volumes stay behind, still
+  billed.
 
 ```sh
-# 1. Stop Flux from recreating anything, then delete the databases (and their volumes).
-for ctx in "$EKS" "$GKE"; do flux --context "$ctx" suspend kustomization --all; done
+# 1. Stop Flux from recreating anything, mark the database volumes for deletion,
+#    then delete the databases (and with them their volumes).
+for ctx in "$EKS" "$GKE"; do
+  flux --context "$ctx" suspend kustomization --all
+  kubectl --context "$ctx" get pv -o jsonpath='{range .items[?(@.spec.claimRef.namespace=="cnpg-db")]}{.metadata.name}{"\n"}{end}' |
+    while read -r pv; do
+      kubectl --context "$ctx" patch pv "$pv" -p '{"spec":{"persistentVolumeReclaimPolicy":"Delete"}}'
+    done
+done
 kubectl --context "$GKE" -n cnpg-db delete cluster pg-replica
 kubectl --context "$EKS" -n cnpg-db delete cluster pg-primary
 kubectl --context "$EKS" get pv; kubectl --context "$GKE" get pv   # wait until empty
