@@ -4,9 +4,6 @@ A proof of concept for running CloudNativePG across clouds: a primary cluster on
 EKS archives WAL to S3, and a replica cluster on GKE replays it. Both clusters
 run Cilium as the only CNI, with default-deny network policies.
 
-> Work in progress. The full write-up (architecture, trade-offs, evidence) is
-> added once the stack runs end to end.
-
 ## Layout
 
 | Path | Tool | Contents |
@@ -31,10 +28,9 @@ Two patterns keep the clouds consistent without hiding their differences.
 
 **One settings module.** `infra/modules/settings` has no providers and no
 resources. It returns the values both clouds must agree on: the name prefix,
-regions, zones, address plan, Kubernetes version and node count, and base labels.
-Every stack calls it, so each value
-is defined once. Validation rejects address ranges that overlap, fall outside
-`10.0.0.0/8`, or have host bits set.
+regions, zones, address plan, Kubernetes version, node count and node OS, and base
+labels. Every stack calls it, so each value is defined once. Validation rejects
+address ranges that overlap, fall outside `10.0.0.0/8`, or have host bits set.
 
 **Matching interfaces, separate implementations.** Each cloud has its own module
 (`infra/modules/network/aws`, `.../gcp`), and each stack picks the one for its
@@ -45,25 +41,26 @@ inputs and outputs listed in its `contract.json`:
 | --- | --- | --- |
 | `modules/network` | `name`, `region`, `cidr`, `labels` | `network_id`, `network_name`, `private_subnet_ids`, `nat_egress_ips` |
 | `modules/network-lookup` | `name`, `region` | the same four as `network` |
-| `modules/cluster` | `name`, `kubernetes_version`, `node_count`, `machine_type`, `api_allowed_cidrs`, `labels` | `cluster_name`, `cluster_endpoint`, `cluster_ca_certificate`, `oidc_issuer_url`, `kubeconfig_command` |
+| `modules/cluster` | `name`, `kubernetes_version`, `node_count`, `machine_type`, `node_image`, `api_allowed_cidrs`, `labels` | `cluster_name`, `cluster_endpoint`, `cluster_ca_certificate`, `oidc_issuer_url`, `kubeconfig_command` |
 
 Features that exist on only one cloud stay as extra inputs and outputs on that
 module: for example AWS zone IDs, the S3 gateway endpoint and IRSA roles, or GCP
 secondary ranges and the Secrets encryption key.
 
-Two checks enforce the interface, and each catches what the other can't:
+OpenTofu has no way to declare a module interface, so two checks were added to
+enforce it. They keep the AWS and GCP implementations interchangeable from a
+caller's point of view: a stack can use either cloud's outputs, or swap a module
+for its lookup, without changing how those outputs are consumed. Each check catches
+what the other can't:
 
 | Check | What it verifies | How |
 | --- | --- | --- |
 | `scripts/check_module_contracts.py` (pre-commit hook) | Every contract input and output is **declared**, and input types match | Reads the `.tf` files; no providers needed |
 | `infra/tests/contracts` (`tofu test`) | The outputs' **values** have the contracted shape, for example `private_subnet_ids` a list (not a tuple) of strings, `nat_egress_ips` a list of IPv4 addresses, `cluster_endpoint` an `https://` URL | Runs each implementation against mock providers |
 
-This contract format and checker are specific to this repo, not an industry
-standard. OpenTofu has no built-in notion of a module interface.
-
-This keeps each stack to one provider and one set of credentials, and keeps the
-differences between clouds visible in review. The portability layer is
-Kubernetes, not OpenTofu.
+Separate implementations keep each stack to one provider and one set of
+credentials, and keep the differences between clouds visible in review. The
+portability layer is Kubernetes, not OpenTofu.
 
 ## Separate state per layer
 
@@ -150,9 +147,8 @@ Both clusters run Kubernetes **1.36**, the newest minor version that is in EKS
 standard support (1.34 to 1.37) and in Cilium 1.20's tested range (1.33 to 1.36).
 The GKE stack checks at plan time that GKE offers it. The node OS on each cloud is
 also a setting (`kubernetes.node_image` in `infra/modules/settings`). Nodes start
-with the taint
-`node.cilium.io/agent-not-ready=true:NoExecute`, so they stay `NotReady` and run
-nothing until Cilium is installed (`k8s/platform`).
+with the taint `node.cilium.io/agent-not-ready=true:NoExecute`, so they stay
+`NotReady` and run nothing until Cilium is installed (`k8s/platform`).
 
 | | EKS (`us-east-1`) | GKE (`us-central1-a`, zonal) |
 | --- | --- | --- |
@@ -214,24 +210,3 @@ Commit messages are checked against Conventional Commits by a `commit-msg` hook.
 CI (`.github/workflows/validate.yml`) runs `make validate` on every pull request
 and on pushes to `main`, using the tool versions from `.tool-versions`. It has a
 read-only token and no cloud credentials.
-
-## Branch protection
-
-`main` is protected by two GitHub rulesets, kept as code in `.github/rulesets/`
-and applied with `make rulesets`. That target creates each ruleset, or updates it
-if one with the same name already exists.
-
-- **main: require pull request.** Every change to `main`, including the owner's,
-  goes through a pull request. Force pushes and branch deletion are blocked, and
-  review threads must be resolved. PRs merge with a merge commit or a rebase, never
-  a squash, so the commit history is kept. No reviews are required because a solo
-  owner can't approve their own PR. Nobody can bypass this ruleset.
-- **main: only admins can merge.** Only the repository admin role may update
-  `main`, and only through a pull request. Anyone given write access later can
-  open PRs but can't merge them.
-
-## Secrets
-
-Nothing secret is ever committed: no cloud keys, kubeconfigs, state or plan
-files, `.tfvars` with credentials, or `.env` files. Anything that has to be saved
-locally goes under `secrets/`, which is gitignored.
