@@ -5,6 +5,7 @@
     "kubernetes_version": "string",
     "node_count": "number",
     "machine_type": "string",
+    "node_image": "string",
     "api_allowed_cidrs": "list(string)",
     "labels": "map(string)"
   },

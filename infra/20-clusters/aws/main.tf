@@ -18,6 +18,7 @@ module "cluster" {
   kubernetes_version = module.settings.kubernetes.version
   node_count         = module.settings.kubernetes.node_count
   machine_type       = var.machine_type
+  node_image         = module.settings.kubernetes.node_image.aws
   api_allowed_cidrs  = var.api_allowed_cidrs
 
   region     = module.settings.regions.aws

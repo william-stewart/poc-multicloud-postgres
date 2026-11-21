@@ -22,6 +22,11 @@ run "default_address_plan_is_valid" {
   }
 
   assert {
+    condition     = output.kubernetes.node_image.aws == "BOTTLEROCKET_x86_64" && output.kubernetes.node_image.gcp == "COS_CONTAINERD"
+    error_message = "Nodes must run the hardened container OS on each cloud: Bottlerocket on EKS, COS on GKE."
+  }
+
+  assert {
     condition     = startswith(output.zones.gcp, output.regions.gcp)
     error_message = "The GKE zone must be in the GCP region."
   }

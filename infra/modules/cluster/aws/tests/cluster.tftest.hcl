@@ -63,6 +63,7 @@ variables {
   kubernetes_version = "1.36"
   node_count         = 2
   machine_type       = "m6i.large"
+  node_image         = "BOTTLEROCKET_x86_64"
   api_allowed_cidrs  = ["203.0.113.7/32"]
   region             = "us-east-1"
   vpc_id             = "vpc-0123456789abcdef0"
@@ -77,6 +78,59 @@ run "nodes_wait_for_cilium" {
     condition     = local.cilium_taint == { key = "node.cilium.io/agent-not-ready", value = "true", effect = "NO_EXECUTE" }
     error_message = "Nodes must carry the Cilium agent-not-ready NoExecute taint."
   }
+}
+
+run "bottlerocket_nodes_are_hardened" {
+  command = plan
+
+  assert {
+    condition     = keys(local.block_device_mappings) == tolist(["xvda", "xvdb"]) && alltrue([for d in values(local.block_device_mappings) : d.ebs.encrypted])
+    error_message = "Bottlerocket needs an OS volume (xvda) and a data volume (xvdb), both encrypted."
+  }
+
+  assert {
+    condition     = local.block_device_mappings.xvdb.ebs.volume_size >= 50
+    error_message = "The Bottlerocket data volume holds images and container storage; it must be at least 50 GiB."
+  }
+
+  assert {
+    condition = alltrue([
+      for setting in [
+        "[settings.host-containers.admin]\nenabled = false",
+        "[settings.host-containers.control]\nenabled = false",
+        "lockdown = \"integrity\"",
+      ] : strcontains(local.bottlerocket_settings, setting)
+    ])
+    error_message = "Bottlerocket must run without admin or control containers and with kernel lockdown."
+  }
+}
+
+run "al2023_uses_one_root_volume" {
+  command = plan
+
+  variables {
+    node_image = "AL2023_x86_64_STANDARD"
+  }
+
+  assert {
+    condition     = keys(local.block_device_mappings) == tolist(["xvda"]) && local.block_device_mappings.xvda.ebs.encrypted
+    error_message = "AL2023 uses a single encrypted root volume."
+  }
+
+  assert {
+    condition     = !local.is_bottlerocket
+    error_message = "Bottlerocket settings must not be passed to other images."
+  }
+}
+
+run "rejects_arm_image_on_x86_instances" {
+  command = plan
+
+  variables {
+    node_image = "BOTTLEROCKET_ARM_64"
+  }
+
+  expect_failures = [var.node_image]
 }
 
 run "cilium_operator_writes_are_scoped" {

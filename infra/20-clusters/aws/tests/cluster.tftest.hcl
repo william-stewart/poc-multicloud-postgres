@@ -88,6 +88,11 @@ run "wires_settings_and_network_lookup" {
   }
 
   assert {
+    condition     = module.settings.kubernetes.node_image.aws == "BOTTLEROCKET_x86_64"
+    error_message = "EKS nodes must run the image from the settings module."
+  }
+
+  assert {
     condition     = length(module.network.private_subnet_ids) == 3
     error_message = "Nodes must use the private subnets found by network-lookup/aws."
   }

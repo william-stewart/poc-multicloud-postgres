@@ -13,6 +13,7 @@ variables {
   kubernetes_version  = "1.36"
   node_count          = 2
   machine_type        = "e2-standard-4"
+  node_image          = "COS_CONTAINERD"
   api_allowed_cidrs   = ["203.0.113.7/32"]
   labels              = { project = "test" }
   project_id          = "poc-test-project"
@@ -113,6 +114,25 @@ run "rejects_unavailable_minor_version" {
   }
 
   expect_failures = [data.google_container_engine_versions.this]
+}
+
+run "nodes_use_the_configured_image" {
+  command = plan
+
+  assert {
+    condition     = google_container_node_pool.default.node_config[0].image_type == "COS_CONTAINERD"
+    error_message = "The node pool must use the node_image from settings."
+  }
+}
+
+run "rejects_unknown_image" {
+  command = plan
+
+  variables {
+    node_image = "WINDOWS_LTSC_CONTAINERD"
+  }
+
+  expect_failures = [var.node_image]
 }
 
 run "rejects_api_open_to_internet" {

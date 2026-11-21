@@ -25,6 +25,16 @@ variable "machine_type" {
   type        = string
 }
 
+variable "node_image" {
+  description = "Node OS, as a GKE image_type."
+  type        = string
+
+  validation {
+    condition     = contains(["COS_CONTAINERD", "UBUNTU_CONTAINERD"], var.node_image)
+    error_message = "node_image must be COS_CONTAINERD or UBUNTU_CONTAINERD."
+  }
+}
+
 variable "api_allowed_cidrs" {
   description = "CIDRs allowed to reach the public Kubernetes API endpoint (e.g. your IP as x.x.x.x/32)."
   type        = list(string)

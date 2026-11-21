@@ -19,7 +19,7 @@ output "cidrs" {
 }
 
 output "kubernetes" {
-  description = "Cluster settings shared by both clouds: { version, node_count }."
+  description = "Cluster settings: { version, node_count, node_image = { aws, gcp } }."
   value       = local.kubernetes
 }
 

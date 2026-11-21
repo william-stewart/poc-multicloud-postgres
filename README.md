@@ -148,14 +148,17 @@ tofu -chdir=infra/10-network/gcp plan -var project_id=<project>
 
 Both clusters run Kubernetes **1.36**, the newest minor version that is in EKS
 standard support (1.34 to 1.37) and in Cilium 1.20's tested range (1.33 to 1.36).
-The GKE stack checks at plan time that GKE offers it. Nodes start with the taint
+The GKE stack checks at plan time that GKE offers it. The node OS on each cloud is
+also a setting (`kubernetes.node_image` in `infra/modules/settings`). Nodes start
+with the taint
 `node.cilium.io/agent-not-ready=true:NoExecute`, so they stay `NotReady` and run
 nothing until Cilium is installed (`k8s/platform`).
 
 | | EKS (`us-east-1`) | GKE (`us-central1-a`, zonal) |
 | --- | --- | --- |
 | Default CNI | None. The EKS module v21 never bootstraps self-managed add-ons, and no EKS add-ons are configured, so there is no VPC CNI, kube-proxy or CoreDNS | Legacy datapath (not Dataplane V2), GKE network policy add-on off |
-| Nodes | 2 x `m6i.large`, AL2023, in the private subnets | 2 x `e2-standard-4`, COS, private nodes. Created without a default node pool, so no node ever lacks the Cilium taint |
+| Nodes | 2 x `m6i.large` in the private subnets | 2 x `e2-standard-4`, private nodes. Created without a default node pool, so no node ever lacks the Cilium taint |
+| Node OS | **Bottlerocket** (`BOTTLEROCKET_x86_64`): read-only root, no package manager. Admin (SSH) and control (SSM) host containers off, kernel lockdown `integrity`; debug with `kubectl debug node/...`. Encrypted OS and data volumes | **Container-Optimized OS** (`COS_CONTAINERD`): Google's equivalent, also read-only and minimal, with Shielded VM secure boot and integrity monitoring |
 | API endpoint | Public and private; public limited to `api_allowed_cidrs` | Public; limited to `api_allowed_cidrs` |
 | Secrets encryption | KMS key created by the EKS module | KMS key from `00-bootstrap/gcp` (Cloud KMS keys can never be deleted, so it outlives nightly teardowns) |
 | Node credentials | IMDSv2 required, hop limit 1; the node role has no VPC CNI policy | Dedicated service account with `roles/container.defaultNodeServiceAccount`; GKE metadata server |

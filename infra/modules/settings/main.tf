@@ -24,6 +24,15 @@ locals {
   kubernetes = {
     version    = "1.36"
     node_count = 2
+
+    # Minimal, hardened container OS per cloud: Bottlerocket on EKS and
+    # Container-Optimized OS on GKE. Both have read-only root filesystems,
+    # no package manager and no shell by default. The AWS value is an EKS
+    # ami_type; the GCP value is a GKE image_type.
+    node_image = {
+      aws = "BOTTLEROCKET_x86_64"
+      gcp = "COS_CONTAINERD"
+    }
   }
 
   # Lowercase keys and values are valid as both AWS tags and GCP labels,

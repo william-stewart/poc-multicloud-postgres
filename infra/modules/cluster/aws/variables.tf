@@ -25,6 +25,16 @@ variable "machine_type" {
   type        = string
 }
 
+variable "node_image" {
+  description = "Node OS, as an EKS ami_type. x86_64 only, to match the instance type."
+  type        = string
+
+  validation {
+    condition     = contains(["BOTTLEROCKET_x86_64", "BOTTLEROCKET_x86_64_FIPS", "AL2023_x86_64_STANDARD"], var.node_image)
+    error_message = "node_image must be BOTTLEROCKET_x86_64, BOTTLEROCKET_x86_64_FIPS or AL2023_x86_64_STANDARD."
+  }
+}
+
 variable "api_allowed_cidrs" {
   description = "CIDRs allowed to reach the public Kubernetes API endpoint (e.g. your IP as x.x.x.x/32)."
   type        = list(string)

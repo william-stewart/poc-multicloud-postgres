@@ -103,6 +103,7 @@ run "aws" {
     kubernetes_version = "1.36"
     node_count         = 2
     machine_type       = "m6i.large"
+    node_image         = "BOTTLEROCKET_x86_64"
     api_allowed_cidrs  = ["203.0.113.7/32"]
     labels             = { project = "contract" }
     region             = "us-east-1"
@@ -148,6 +149,7 @@ run "gcp" {
     kubernetes_version  = "1.36"
     node_count          = 2
     machine_type        = "e2-standard-4"
+    node_image          = "COS_CONTAINERD"
     api_allowed_cidrs   = ["203.0.113.7/32"]
     labels              = { project = "contract" }
     project_id          = "poc-contract-test"

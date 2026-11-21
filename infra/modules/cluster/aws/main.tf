@@ -5,6 +5,33 @@ locals {
   account_id = data.aws_caller_identity.current.account_id
   partition  = data.aws_partition.current.partition
 
+  is_bottlerocket = startswith(var.node_image, "BOTTLEROCKET")
+
+  # Bottlerocket keeps the OS on a small volume (xvda) and containers, images
+  # and logs on a separate data volume (xvdb). AL2023 uses one root volume.
+  # Every volume is encrypted.
+  block_device_mappings = local.is_bottlerocket ? {
+    xvda = { device_name = "/dev/xvda", ebs = { volume_size = 4, volume_type = "gp3", encrypted = true, delete_on_termination = true } }
+    xvdb = { device_name = "/dev/xvdb", ebs = { volume_size = 50, volume_type = "gp3", encrypted = true, delete_on_termination = true } }
+    } : {
+    xvda = { device_name = "/dev/xvda", ebs = { volume_size = 50, volume_type = "gp3", encrypted = true, delete_on_termination = true } }
+  }
+
+  # Bottlerocket hardening, merged into the TOML user data EKS generates:
+  # no admin container (SSH) and no control container (SSM), so there is no
+  # interactive way onto a node; kernel lockdown blocks runtime changes to
+  # the kernel. Debug through Kubernetes instead (kubectl debug node/...).
+  bottlerocket_settings = <<-EOT
+    [settings.host-containers.admin]
+    enabled = false
+
+    [settings.host-containers.control]
+    enabled = false
+
+    [settings.kernel]
+    lockdown = "integrity"
+  EOT
+
   # Nodes start tainted so no pod schedules until the Cilium agent is ready
   # on them; Cilium removes the taint itself.
   cilium_taint = {
@@ -87,7 +114,7 @@ module "eks" {
 
   eks_managed_node_groups = {
     default = {
-      ami_type       = "AL2023_x86_64_STANDARD"
+      ami_type       = var.node_image
       instance_types = [var.machine_type]
       subnet_ids     = var.subnet_ids
 
@@ -101,17 +128,9 @@ module "eks" {
       # so the node role doesn't need the VPC CNI policy.
       iam_role_attach_cni_policy = false
 
-      block_device_mappings = {
-        xvda = {
-          device_name = "/dev/xvda"
-          ebs = {
-            volume_size           = 50
-            volume_type           = "gp3"
-            encrypted             = true
-            delete_on_termination = true
-          }
-        }
-      }
+      block_device_mappings = local.block_device_mappings
+      bootstrap_extra_args  = local.is_bottlerocket ? local.bottlerocket_settings : null
+
       # IMDSv2 is required and the hop limit is 1 by default, so pods can't
       # reach the node's instance credentials.
     }

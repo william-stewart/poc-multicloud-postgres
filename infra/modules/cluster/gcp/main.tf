@@ -179,7 +179,7 @@ resource "google_container_node_pool" "default" {
 
   node_config {
     machine_type = var.machine_type
-    image_type   = "COS_CONTAINERD"
+    image_type   = var.node_image
     disk_type    = "pd-balanced"
     disk_size_gb = 50
 
