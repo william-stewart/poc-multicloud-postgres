@@ -331,6 +331,8 @@ kubectl cnpg status pg-replica -n cnpg-db --context "$GKE"
 
 # Network policies: watch for drops while forcing a WAL switch and a backup.
 hubble observe -n cnpg-db --verdict DROPPED -f
+# The same flows as a live service map, allowed and dropped (Hubble UI, opens a browser):
+cilium --context "$EKS" hubble ui
 # No access from other namespaces (times out):
 kubectl --context "$EKS" run nettest --rm -it --restart=Never -n default --image=postgres:18 -- \
   pg_isready -h pg-primary-rw.cnpg-db -t 5
