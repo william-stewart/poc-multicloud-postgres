@@ -267,14 +267,16 @@ tofu -chdir=infra/30-data/aws destroy \
   -var "replica_egress_ips=$(tofu -chdir=infra/10-network/gcp output -json nat_egress_ips)"
 tofu -chdir=infra/20-clusters/gcp destroy -var project_id="$GCP_PROJECT" -var "api_allowed_cidrs=[\"$MY_IP\"]"
 tofu -chdir=infra/20-clusters/aws destroy -var "api_allowed_cidrs=[\"$MY_IP\"]"
+make cilium-enis            # lists ENIs Cilium left in the VPC; DELETE=1 removes them
 tofu -chdir=infra/10-network/gcp destroy -var project_id="$GCP_PROJECT"
 tofu -chdir=infra/10-network/aws destroy
 ```
 
-The state backends stay. If `10-network/aws` hangs on network interfaces, look for
-leftover ENIs from Cilium in the VPC
-(`aws ec2 describe-network-interfaces --filters Name=status,Values=available`) and
-delete them. When you're done with the project for good, also remove the deploy key
+The state backends stay. In ENI mode the Cilium operator creates ENIs and
+garbage-collects the unattached ones every 5 minutes, but once the cluster is gone
+nothing does, and a leftover ENI blocks the VPC's destroy. `make cilium-enis` lists
+the unattached ENIs in this VPC tagged `io.cilium/cilium-managed=true`, and with
+`DELETE=1` deletes exactly those. When you're done with the project for good, also remove the deploy key
 (`gh repo deploy-key delete`) and `secrets/flux-deploy-key*`.
 
 ## Design
@@ -377,6 +379,7 @@ stack's state file.
 | `k8s/data` | The PostgreSQL clusters, object stores and backups |
 | `k8s/policies` | Default deny and Cilium allow rules for `cnpg-db` |
 | `k8s/*.sh` | `bootstrap.sh`, `data-vars.sh`, `replica-credentials.sh` (run through `make`) |
+| `scripts/` | Validation helpers, and `cilium-enis.sh` for teardown |
 
 ## Local validation
 

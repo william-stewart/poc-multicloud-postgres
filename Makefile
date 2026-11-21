@@ -72,6 +72,10 @@ replica-credentials: ## Create or rotate the GKE replica's read-only S3 key, sto
 	fi
 	k8s/replica-credentials.sh "$(CONTEXT)"
 
+.PHONY: cilium-enis
+cilium-enis: ## List ENIs Cilium left in the EKS VPC after teardown; DELETE=1 removes them
+	scripts/cilium-enis.sh $(if $(DELETE),--delete)
+
 .PHONY: flux-manifests
 flux-manifests: ## Regenerate k8s/flux/gotk-components.yaml with the pinned flux CLI
 	flux install --export > k8s/flux/gotk-components.yaml
