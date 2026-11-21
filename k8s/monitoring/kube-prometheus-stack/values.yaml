@@ -48,9 +48,11 @@ grafana:
     auth.anonymous:
       enabled: true
       org_role: Viewer
+  # Grafana runs its database migrations on first start, which went past a
+  # 256Mi limit (OOMKilled) on a local run.
   resources:
     requests:
       cpu: 50m
-      memory: 128Mi
-    limits:
       memory: 256Mi
+    limits:
+      memory: 512Mi
