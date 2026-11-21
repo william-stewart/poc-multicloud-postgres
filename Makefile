@@ -14,7 +14,7 @@ $(shell mkdir -p "$(TF_PLUGIN_CACHE_DIR)")
 
 .PHONY: help
 help: ## List targets
-	@grep -hE '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-16s %s\n", $$1, $$2}'
+	@grep -hE '^[a-zA-Z0-9_-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-16s %s\n", $$1, $$2}'
 
 .PHONY: tools
 tools: ## Check that every required tool is installed
@@ -75,6 +75,14 @@ app-credentials: ## Store the same app owner credentials on both clusters: EKS=<
 .PHONY: cilium-enis
 cilium-enis: ## List ENIs Cilium left in the EKS VPC after teardown; DELETE=1 removes them
 	scripts/cilium-enis.sh $(if $(DELETE),--delete)
+
+.PHONY: e2e
+e2e: ## End-to-end test on a local cluster (default Rancher Desktop): E2E_CONTEXT=<ctx> E2E_KEEP=1 to keep it
+	test/e2e/run.sh
+
+.PHONY: e2e-clean
+e2e-clean: ## Remove what make e2e installed from the local cluster
+	test/e2e/run.sh --clean
 
 .PHONY: flux-manifests
 flux-manifests: ## Regenerate k8s/flux/gotk-components.yaml with the pinned flux CLI

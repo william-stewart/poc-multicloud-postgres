@@ -228,6 +228,47 @@ S3, because the replica can't bootstrap without one.
 Once the replica is ready it takes its first base backup to GCS; wait for it to reach
 `completed` (`kubectl --context "$GKE" -n cnpg-db get backup`).
 
+## End-to-end test on a local cluster
+
+`make e2e` runs the data layer on a local single-node cluster, Rancher Desktop by
+default, then breaks it on purpose and measures what happens. It uses the real
+`k8s/data` manifests and the chart versions and values that Flux installs. A local S3
+server (SeaweedFS) stands in for both clouds' object storage. Run it before changing
+`k8s/data` or the operator versions, and before a live drill.
+
+```sh
+make e2e                    # about 20-30 minutes, then removes what it installed
+E2E_KEEP=1 make e2e         # leave it running for inspection; make e2e-clean removes it
+```
+
+| # | Scenario | Checked | Measured |
+| --- | --- | --- | --- |
+| 1 | Replication | A row written on `pg-primary` reaches `pg-replica` | Lag after a WAL switch |
+| 2 | Restore from the GCP copy | Point-in-time restore from `pg-replica`'s archive alone lands exactly on the target time | Restore time |
+| 3 | Kill the primary pod | The other instance takes writes; no committed row is lost; archiving continues | Failover time |
+| 4 | Object store outage | Writes continue; CloudNativePG reports archiving failing; the replica catches up afterwards | Time to detect, time to catch up |
+| 5 | Planned switchover and back | Promotion tokens, no row lost, replication in both directions | Switchover time each way |
+| 6 | Unplanned failover | The fenced primary refuses connections; `pg-replica` takes writes | Failover time, rows lost (RPO) |
+
+Each run writes its results to `evidence/e2e/<UTC time>.md`; commit that file as the
+record of the run. A failed run also saves cluster state and logs under
+`test/e2e/results/` (gitignored).
+
+How it differs from production, and so what it doesn't prove: the overlays in
+`test/e2e/manifests` give every object store a static key in place of IRSA, GKE
+Workload Identity and the two federations. They also use local volumes, smaller
+resources, and preferred rather than required anti-affinity, because there is one
+node. Cilium network policies aren't applied. Both archives live on one S3 server, and
+both clusters share one node and one operator. Everything else, including the
+distributed topology and `archive_timeout`, is what production runs. `make validate`
+renders these overlays and checks them against the CRD schemas, so a change to
+`k8s/data` that breaks them fails there first.
+
+The script only runs against a context whose API server is on `localhost`, so it
+can't touch a cloud cluster. It needs `kubectl`, `helm`, `kustomize`, `python3` and
+`openssl`. Give Rancher Desktop's VM 4 CPUs and 8 GB (Preferences > Virtual Machine);
+with less, the four PostgreSQL pods may wait for resources.
+
 ## Verify
 
 ```sh
@@ -572,6 +613,8 @@ stack's state file.
 | `k8s/data` | The PostgreSQL clusters, object stores and backups |
 | `k8s/policies` | Default deny and Cilium allow rules for `cnpg-db` |
 | `k8s/*.sh` | `bootstrap.sh`, `data-vars.sh`, `app-credentials.sh` (run through `make`) |
+| `test/e2e` | The local end-to-end test (`make e2e`) and its overlays of `k8s/data` |
+| `evidence/e2e` | Results of end-to-end runs |
 
 ## Local validation
 
@@ -596,6 +639,7 @@ make validate   # every check below; no cloud credentials needed
    - checkov's Kubernetes checks on the manifests exactly as Flux applies them
    - `${VARS}` checked against the `*.example.env` files, and `bootstrap.sh` and the Flux
      image digests checked against what Flux manages
+   - the end-to-end test's overlays rendered and validated the same way
 4. `gitleaks` over the full git history
 
 CI runs `make validate` on every pull request and on pushes to `main`, with a read-only
@@ -605,7 +649,9 @@ token and no cloud credentials.
 
 - HA VPN and streaming replication, for lag under a minute.
 - Run the switchover, failover and failback drills on live clusters, and record RTO
-  and RPO. None of them has been run yet.
+  and RPO. `make e2e` measures them locally; the live drill, with real identities,
+  network policies and cross-cloud latency, hasn't been run yet. Failback after an
+  unplanned failover (rebuilding from the other archive) isn't in `make e2e` yet.
 - A fence that doesn't depend on the old primary's cluster reconciling first, and
   client routing across clouds (DNS that follows the primary).
 - Alerts on archive failures and replica lag; regional, multi-AZ clusters; one NAT

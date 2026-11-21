@@ -1,0 +1,32 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: pg-restore
+  namespace: cnpg-db
+spec:
+  instances: 1
+  enableSuperuserAccess: false
+  bootstrap:
+    recovery:
+      source: pg-replica
+      recoveryTarget:
+        targetTime: "__TARGET_TIME__"
+  # Read-only use of the existing gcs-store; no WAL archiver, so the restored
+  # cluster never writes to anyone's archive.
+  externalClusters:
+    - name: pg-replica
+      plugin:
+        name: barman-cloud.cloudnative-pg.io
+        parameters:
+          barmanObjectName: gcs-store
+          serverName: pg-replica
+  storage:
+    size: 1Gi
+    storageClass: local-path
+  resources:
+    requests:
+      cpu: 200m
+      memory: 384Mi
+    limits:
+      cpu: 200m
+      memory: 384Mi

@@ -1,0 +1,111 @@
+# Adapts the real k8s/data manifests to a single local node, changing only
+# what can't exist there:
+#   - every ObjectStore talks to the local S3 server with a static key, in
+#     place of IRSA, GKE Workload Identity or federation; aws-* stores use the
+#     bucket aws-archive, gcs-* stores gcs-archive;
+#   - no cloud service account annotations or projected cloud tokens;
+#   - local-path volumes, smaller Guaranteed-QoS resources, and preferred
+#     (not required) anti-affinity, since there is only one node.
+# Everything else (topology, archive_timeout, plugins, backups, bootstrap) is
+# what production runs. make validate renders these overlays, so a change in
+# k8s/data that breaks them fails there first.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+patches:
+  - target:
+      kind: ObjectStore
+      name: aws-store
+    patch: |-
+      - op: replace
+        path: /spec/configuration/destinationPath
+        value: s3://aws-archive/
+      - op: add
+        path: /spec/configuration/endpointURL
+        value: http://seaweedfs.s3-emulator.svc:8333
+      - op: replace
+        path: /spec/configuration/s3Credentials
+        value:
+          accessKeyId:
+            name: s3-emulator
+            key: ACCESS_KEY_ID
+          secretAccessKey:
+            name: s3-emulator
+            key: ACCESS_SECRET_KEY
+  - target:
+      kind: ObjectStore
+      name: aws-store-ro
+    patch: |-
+      - op: remove
+        path: /spec/instanceSidecarConfiguration/env
+      - op: replace
+        path: /spec/configuration/destinationPath
+        value: s3://aws-archive/
+      - op: add
+        path: /spec/configuration/endpointURL
+        value: http://seaweedfs.s3-emulator.svc:8333
+      - op: replace
+        path: /spec/configuration/s3Credentials
+        value:
+          accessKeyId:
+            name: s3-emulator
+            key: ACCESS_KEY_ID
+          secretAccessKey:
+            name: s3-emulator
+            key: ACCESS_SECRET_KEY
+  - target:
+      kind: ObjectStore
+      name: gcs-store.*
+    patch: |-
+      - op: remove
+        path: /spec/configuration/googleCredentials
+      - op: replace
+        path: /spec/configuration/destinationPath
+        value: s3://gcs-archive/
+      - op: add
+        path: /spec/configuration/endpointURL
+        value: http://seaweedfs.s3-emulator.svc:8333
+      - op: add
+        path: /spec/configuration/s3Credentials
+        value:
+          accessKeyId:
+            name: s3-emulator
+            key: ACCESS_KEY_ID
+          secretAccessKey:
+            name: s3-emulator
+            key: ACCESS_SECRET_KEY
+  - target:
+      kind: Cluster
+    patch: |-
+      - op: remove
+        path: /spec/serviceAccountTemplate
+      - op: replace
+        path: /spec/storage
+        value:
+          size: 1Gi
+          storageClass: local-path
+      - op: replace
+        path: /spec/walStorage
+        value:
+          size: 1Gi
+          storageClass: local-path
+      - op: replace
+        path: /spec/resources
+        value:
+          requests:
+            cpu: 200m
+            memory: 384Mi
+          limits:
+            cpu: 200m
+            memory: 384Mi
+      - op: add
+        path: /spec/affinity
+        value:
+          enablePodAntiAffinity: true
+          podAntiAffinityType: preferred
+          topologyKey: kubernetes.io/hostname
+  - target:
+      kind: Cluster
+      name: pg-replica
+    patch: |-
+      - op: remove
+        path: /spec/projectedVolumeTemplate

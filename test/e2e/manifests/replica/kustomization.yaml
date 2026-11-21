@@ -1,0 +1,7 @@
+# k8s/data/gcp, adapted to the local cluster (see ../emulate).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../../../k8s/data/gcp
+components:
+  - ../emulate

@@ -1,0 +1,9 @@
+# A throwaway cluster restored to a point in time from pg-replica's archive
+# alone (gcs-archive, standing in for GCS): proof that the GCP copy can
+# restore without AWS. run.sh fills in the target time.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - cluster.yaml
+components:
+  - ../../../../k8s/data/components/postgres-image

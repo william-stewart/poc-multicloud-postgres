@@ -90,7 +90,7 @@ repos:
         language_version: python3.13
         additional_dependencies: [pyyaml==6.0.4, checkov==3.4.6]
         entry: python scripts/validate_k8s.py
-        files: ^(k8s/|scripts/validate_k8s\.py$|\.tool-versions$)
+        files: ^(k8s/|test/e2e/manifests/|scripts/validate_k8s\.py$|\.tool-versions$)
         pass_filenames: false
 
       # Guardrails that encode the project's own rules.
