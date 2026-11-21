@@ -8,3 +8,5 @@ resources:
   - objectstore.yaml
   - cluster.yaml
   - scheduledbackup.yaml
+components:
+  - ../components/postgres-image

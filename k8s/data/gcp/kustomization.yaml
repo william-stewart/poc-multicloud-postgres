@@ -8,3 +8,5 @@ resources:
   - ../base
   - objectstore.yaml
   - cluster.yaml
+components:
+  - ../components/postgres-image

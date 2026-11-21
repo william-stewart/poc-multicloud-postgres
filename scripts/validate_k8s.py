@@ -374,6 +374,26 @@ def check_never_pruned(docs: list[dict], where: str) -> None:
             )
 
 
+def check_postgres_images(clusters: list[tuple[str, dict]]) -> None:
+    """Every CloudNativePG Cluster runs the same PostgreSQL image, pinned by digest.
+
+    The replica replays the primary's WAL, which only works on the same major
+    version; a mismatch would otherwise surface only when replay fails.
+    """
+    images = {}
+    for where, cluster in clusters:
+        name = f"{where}: Cluster {cluster['metadata']['name']}"
+        image = cluster.get("spec", {}).get("imageName")
+        if not image or not re.search(r"@sha256:[0-9a-f]{64}$", image):
+            raise Failure(f"{name} must set spec.imageName pinned by digest (see k8s/data/components/postgres-image)")
+        images[name] = image
+    if len(set(images.values())) > 1:
+        lines = "\n".join(f"  {n}: {i}" for n, i in images.items())
+        raise Failure(f"CloudNativePG Clusters run different PostgreSQL images; primary and replica must match:\n{lines}")
+    if images:
+        print(f"CloudNativePG Clusters share one digest-pinned PostgreSQL image ({len(images)})")
+
+
 def check_bootstrap_matches(helm_releases: dict[str, list[dict]]) -> None:
     """bootstrap.sh installs Cilium (and CoreDNS on EKS) at the versions Flux manages."""
     script = (ROOT / "k8s" / "bootstrap.sh").read_text()
@@ -423,7 +443,9 @@ def flux_kustomizations(docs: list[dict]) -> list[dict]:
     return ordered
 
 
-def render_cloud(cloud: str, schema_dir: Path, helm_releases: dict[str, list[dict]]) -> list[tuple[str, str, bool]]:
+def render_cloud(
+    cloud: str, schema_dir: Path, helm_releases: dict[str, list[dict]], pg_clusters: list[tuple[str, dict]]
+) -> list[tuple[str, str, bool]]:
     """Build and render everything for one cloud; return (label, manifests, ignore_missing)."""
     cluster_dir = ROOT / "k8s" / "clusters" / cloud
     clusters = run(["kustomize", "build", str(cluster_dir)])
@@ -448,6 +470,10 @@ def render_cloud(cloud: str, schema_dir: Path, helm_releases: dict[str, list[dic
 
         docs = load_docs(built)
         check_never_pruned(docs, f"{cloud}/{name} ({path})")
+        pg_clusters.extend(
+            (f"{cloud}/{name}", d) for d in docs
+            if d.get("kind") == "Cluster" and d.get("apiVersion", "").startswith("postgresql.cnpg.io/")
+        )
         releases =[d for d in docs if d.get("kind") == "HelmRelease"]
         helm_releases.setdefault(cloud, []).extend(releases)
         for hr in releases:
@@ -476,11 +502,13 @@ def main() -> int:
     try:
         check_flux_version()
         helm_releases: dict[str, list[dict]] = {}
+        pg_clusters: list[tuple[str, dict]] = []
         with tempfile.TemporaryDirectory() as tmp:
             schema_dir = Path(tmp)
             # Render everything first, so the CRDs of every chart are known
             # before validating the custom resources that use them.
-            outputs = {cloud: render_cloud(cloud, schema_dir, helm_releases) for cloud in CLOUDS}
+            outputs = {cloud: render_cloud(cloud, schema_dir, helm_releases, pg_clusters) for cloud in CLOUDS}
+            check_postgres_images(pg_clusters)
             print(f"strict schemas generated from installed CRDs: {sum(1 for _ in schema_dir.rglob('*.json'))}")
             for cloud, items in outputs.items():
                 print(f"== {cloud}")
