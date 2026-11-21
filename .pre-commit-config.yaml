@@ -69,7 +69,7 @@ repos:
         pass_filenames: false
 
       - id: module-contracts
-        name: per-cloud modules honour their shared interface
+        name: per-cloud modules honor their shared interface
         language: python
         entry: python scripts/check_module_contracts.py
         files: ^(infra/modules/|scripts/check_module_contracts\.py$)
