@@ -8,8 +8,11 @@ variable "api_allowed_cidrs" {
   }
 }
 
+# 4 vCPU, like GKE's e2-standard-4. Each PostgreSQL pod takes 1.5 CPU
+# (postgres 1 + Barman sidecar 0.5, Guaranteed QoS), which leaves too little
+# of a 2-vCPU node for Cilium, CoreDNS, Flux and the operators.
 variable "machine_type" {
   description = "Worker node instance type."
   type        = string
-  default     = "m6i.large"
+  default     = "m6i.xlarge"
 }

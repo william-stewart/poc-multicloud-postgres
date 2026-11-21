@@ -11,14 +11,16 @@ spec:
   # No retentionPolicy: the replica must never delete from the primary's archive.
   # The plugin's sidecar in each instance pod. Requests equal limits, like the
   # postgres container's, or the whole pod drops out of Guaranteed QoS.
+  # The sidecar runs barman-cloud (Python), compressing and uploading in
+  # parallel; at 100m CPU and 128Mi it crashed mid-backup in make e2e.
   instanceSidecarConfiguration:
     resources:
       requests:
-        cpu: 100m
-        memory: 128Mi
+        cpu: 500m
+        memory: 512Mi
       limits:
-        cpu: 100m
-        memory: 128Mi
+        cpu: 500m
+        memory: 512Mi
     # AWS's standard web identity settings, which the SDK in the sidecar picks
     # up on its own: it exchanges the token at STS for the reader role's
     # short-lived credentials, and refreshes them as the token rotates. The

@@ -137,10 +137,21 @@ dump_diagnostics() {
   kc -n "$NS" get cluster -o yaml >"$diagnostics/clusters.yaml" 2>&1 || true
   kc -n "$NS" get events --sort-by=.lastTimestamp >"$diagnostics/events.txt" 2>&1 || true
   kc -n cnpg-system logs deploy/cloudnative-pg --tail=500 >"$diagnostics/operator.log" 2>&1 || true
-  kc -n cnpg-system logs deploy/barman-cloud --tail=500 >"$diagnostics/plugin.log" 2>&1 || true
-  local pod
+  kc -n cnpg-system logs deploy/plugin-barman-cloud --tail=500 >"$diagnostics/plugin.log" 2>&1 || true
+  local pod container
   for pod in $(kc -n "$NS" get pods -o name 2>/dev/null); do
     kc -n "$NS" logs "$pod" --all-containers --tail=300 >"$diagnostics/${pod#pod/}.log" 2>&1 || true
+    # Why each container last stopped (OOMKilled, Error, exit code), which
+    # neither the events nor the current logs show.
+    # The Barman plugin runs as a native sidecar, so its status is under
+    # initContainerStatuses.
+    kc -n "$NS" get "$pod" -o jsonpath='{range .status.initContainerStatuses[*]}{.name}{" restarts="}{.restartCount}{" last="}{.lastState.terminated.reason}{" exit="}{.lastState.terminated.exitCode}{"\n"}{end}{range .status.containerStatuses[*]}{.name}{" restarts="}{.restartCount}{" last="}{.lastState.terminated.reason}{" exit="}{.lastState.terminated.exitCode}{"\n"}{end}' 2>&1 |
+      sed "s|^|${pod#pod/} |" >>"$diagnostics/container-status.txt" || true
+    # Logs of a container's previous run, lost from the line above once it restarts.
+    for container in $(kc -n "$NS" get "$pod" -o jsonpath='{range .status.initContainerStatuses[?(@.restartCount>0)]}{.name}{" "}{end}{range .status.containerStatuses[?(@.restartCount>0)]}{.name}{" "}{end}' 2>/dev/null); do
+      kc -n "$NS" logs "$pod" -c "$container" --previous --tail=300 \
+        >"$diagnostics/${pod#pod/}.$container.previous.log" 2>&1 || true
+    done
   done
   echo "Diagnostics: $diagnostics"
 }
@@ -255,7 +266,19 @@ switch_wal() { sql "$1" "SELECT pg_walfile_name(pg_switch_wal())"; }
 has_mark() { [[ $(sql "$1" "SELECT count(*) FROM e2e WHERE mark = '$2'") -ge 1 ]]; }
 lacks_mark() { [[ $(sql "$1" "SELECT count(*) FROM e2e WHERE mark = '$2'") -eq 0 ]]; }
 writable() { [[ $(sql "$1" "SELECT NOT pg_is_in_recovery()") == t ]]; }
+# Demotion publishes its token before the instance restarts as a replica;
+# queries fail with "starting up" until it is back.
+back_as_replica() { [[ $(sql "$1" "SELECT pg_is_in_recovery()") == t ]]; }
 row_count() { sql "$1" "SELECT count(*) FROM e2e"; }
+# A newly promoted primary is restarted in place shortly afterwards, to apply
+# settings that only change on restart. Settled: healthy, writable, nothing
+# pending a restart, and still so 15s later, after the operator has acted.
+settled_once() {
+  [[ $(kc -n "$NS" get cluster "$1" -o jsonpath='{.status.phase}') == "Cluster in healthy state" ]] &&
+    writable "$1" &&
+    [[ $(sql "$1" "SELECT count(*) FROM pg_settings WHERE pending_restart") -eq 0 ]]
+}
+settled() { settled_once "$1" && sleep 15 && settled_once "$1"; }
 archived_past() { [[ $(sql "$1" "SELECT coalesce(last_archived_wal, '') >= '$2' FROM pg_stat_archiver") == t ]]; }
 cluster_ready() { kc -n "$NS" wait --for=condition=Ready "cluster/$1" --timeout=5s; }
 condition_is() { # cluster type status
@@ -400,11 +423,15 @@ test_switchover() {
   start=$(now)
   set_replica pg-primary '{"primary":"pg-replica"}'
   require "pg-primary demoted, with a demotion token" 300 has_demotion_token pg-primary
+  require "pg-primary back up as a replica after demotion" 300 back_as_replica pg-primary
   rows_at_demotion=$(row_count pg-primary)
   token=$(demotion_token pg-primary)
   set_replica pg-replica "{\"primary\":\"pg-replica\",\"promotionToken\":\"$token\"}"
   require "pg-replica promoted" 900 writable pg-replica
   record "switchover to pg-replica (writes refused meanwhile)" PASS "$(since "$start")s"
+  start=$(now)
+  require "pg-replica settled after promotion" 300 settled pg-replica
+  record "pg-replica settled after promotion (in-place restart)" PASS "$(since "$start")s"
   if [[ $(row_count pg-replica) == "$rows_at_demotion" ]]; then
     record "no row lost in the switchover" PASS "$rows_at_demotion rows"
   else
@@ -419,11 +446,15 @@ test_switchover() {
   start=$(now)
   set_replica pg-replica '{"primary":"pg-primary","promotionToken":null}'
   require "pg-replica demoted, with a demotion token" 300 has_demotion_token pg-replica
+  require "pg-replica back up as a replica after demotion" 300 back_as_replica pg-replica
   rows_at_demotion=$(row_count pg-replica)
   token=$(demotion_token pg-replica)
   set_replica pg-primary "{\"primary\":\"pg-primary\",\"promotionToken\":\"$token\"}"
   require "pg-primary promoted" 900 writable pg-primary
   record "switch back to pg-primary" PASS "$(since "$start")s"
+  start=$(now)
+  require "pg-primary settled after promotion" 300 settled pg-primary
+  record "pg-primary settled after promotion (in-place restart)" PASS "$(since "$start")s"
   if [[ $(row_count pg-primary) == "$rows_at_demotion" ]]; then
     record "no row lost in the switch back" PASS "$rows_at_demotion rows"
   else
@@ -455,6 +486,9 @@ test_unplanned_failover() {
   set_replica pg-replica '{"primary":"pg-replica","promotionToken":null}'
   require "pg-replica promoted without a token" 900 writable pg-replica
   record "failover to pg-replica" PASS "$(since "$start")s"
+  start=$(now)
+  require "pg-replica settled after promotion" 300 settled pg-replica
+  record "pg-replica settled after promotion (in-place restart)" PASS "$(since "$start")s"
   surviving=$(sql pg-replica "SELECT count(*) FROM e2e WHERE mark LIKE 'rpo-%'")
   record "rows lost from the last ${written}s of writes (RPO)" INFO "$((written - surviving)) of $written; archive_timeout is 60s"
   if wait_until 120 primary_fenced; then

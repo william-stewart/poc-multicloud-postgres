@@ -14,6 +14,9 @@ skip-path:
   - \.terraform
   - \.claude
   - secrets
+  # Diagnostics from failed `make e2e` runs: gitignored cluster dumps whose
+  # status hashes look like secrets to checkov.
+  - test/e2e/results
 download-external-modules: true
 compact: true
 quiet: true
