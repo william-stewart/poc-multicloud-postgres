@@ -14,7 +14,7 @@ For each cloud:
      charts' schemas list every key but still accept unknown ones, so a typo
      or a key removed in a new chart version would otherwise be ignored.
   4. Turn every CRD that Flux, the pinned charts and the pinned Cilium release
-     (CiliumNetworkPolicy) install into a strict JSON
+     (CiliumNetworkPolicy, fetched by commit) install into a strict JSON
      schema (unknown fields rejected), and validate all of the above with
      kubeconform against those schemas, Kubernetes 1.36, and a pinned CRD
      catalog as a fallback.
@@ -152,18 +152,33 @@ def collect_crd_schemas(docs: list[dict], schema_dir: Path) -> None:
             path.write_text(json.dumps(schema))
 
 
+# The commit each Cilium release tag points to. Tags can be moved, so the CRDs
+# are fetched by commit. To upgrade Cilium, add the new tag's commit:
+#   git ls-remote https://github.com/cilium/cilium 'refs/tags/v<version>^{}'
+CILIUM_COMMITS = {
+    "1.20.5": "150121410c147fad575ac5dcbce6de923be69042",
+}
+
+
 def cilium_crds(version: str) -> list[dict]:
     """CiliumNetworkPolicy CRDs as the pinned Cilium release installs them.
 
     The Cilium operator creates its CRDs at runtime from copies embedded in
-    the release, so they aren't in the chart; fetch them from the same tag.
+    the release, so they aren't in the chart; fetch them from the release's
+    commit.
     """
+    commit = CILIUM_COMMITS.get(version)
+    if commit is None:
+        raise Failure(
+            f"Cilium {version} has no pinned commit in CILIUM_COMMITS (scripts/validate_k8s.py); add the commit "
+            f"from: git ls-remote https://github.com/cilium/cilium 'refs/tags/v{version}^{{}}'"
+        )
     docs = []
     for name in ("ciliumnetworkpolicies", "ciliumclusterwidenetworkpolicies"):
-        cached = CACHE / f"cilium-{version}-{name}.yaml"
+        cached = CACHE / f"cilium-{commit}-{name}.yaml"
         if not cached.exists():
             CACHE.mkdir(parents=True, exist_ok=True)
-            url = f"https://raw.githubusercontent.com/cilium/cilium/v{version}/pkg/k8s/apis/cilium.io/client/crds/v2/{name}.yaml"
+            url = f"https://raw.githubusercontent.com/cilium/cilium/{commit}/pkg/k8s/apis/cilium.io/client/crds/v2/{name}.yaml"
             run(["curl", "-fsSL", "-o", str(cached), url])
         docs += load_docs(cached.read_text())
     return docs
@@ -350,6 +365,50 @@ def check_flux_version() -> None:
     print(f"Flux controller images pinned by digest ({len(upstream)})")
 
 
+# Objects whose deletion would take down cluster networking (and with it Flux)
+# or delete a database. Flux must never prune them.
+NEVER_PRUNE = {
+    ("HelmRelease", "kube-system", "cilium"),
+    ("HelmRelease", "kube-system", "coredns"),
+}
+NEVER_PRUNE_KINDS = {("postgresql.cnpg.io", "Cluster")}
+
+
+def check_never_pruned(docs: list[dict], where: str) -> None:
+    """Objects Flux must never delete carry kustomize.toolkit.fluxcd.io/prune: disabled."""
+    for d in docs:
+        meta = d.get("metadata", {})
+        key = (d.get("kind"), meta.get("namespace"), meta.get("name"))
+        group = d.get("apiVersion", "").split("/")[0]
+        if key not in NEVER_PRUNE and (group, d.get("kind")) not in NEVER_PRUNE_KINDS:
+            continue
+        if (meta.get("annotations") or {}).get("kustomize.toolkit.fluxcd.io/prune") != "disabled":
+            raise Failure(
+                f"{where}: {key[0]} {key[1]}/{key[2]} must have the annotation "
+                "kustomize.toolkit.fluxcd.io/prune: disabled, or removing it from git deletes it"
+            )
+
+
+def check_postgres_images(clusters: list[tuple[str, dict]]) -> None:
+    """Every CloudNativePG Cluster runs the same PostgreSQL image, pinned by digest.
+
+    The replica replays the primary's WAL, which only works on the same major
+    version; a mismatch would otherwise surface only when replay fails.
+    """
+    images = {}
+    for where, cluster in clusters:
+        name = f"{where}: Cluster {cluster['metadata']['name']}"
+        image = cluster.get("spec", {}).get("imageName")
+        if not image or not re.search(r"@sha256:[0-9a-f]{64}$", image):
+            raise Failure(f"{name} must set spec.imageName pinned by digest (see k8s/data/components/postgres-image)")
+        images[name] = image
+    if len(set(images.values())) > 1:
+        lines = "\n".join(f"  {n}: {i}" for n, i in images.items())
+        raise Failure(f"CloudNativePG Clusters run different PostgreSQL images; primary and replica must match:\n{lines}")
+    if images:
+        print(f"CloudNativePG Clusters share one digest-pinned PostgreSQL image ({len(images)})")
+
+
 def check_bootstrap_matches(helm_releases: dict[str, list[dict]]) -> None:
     """bootstrap.sh installs Cilium (and CoreDNS on EKS) at the versions Flux manages."""
     script = (ROOT / "k8s" / "bootstrap.sh").read_text()
@@ -399,7 +458,9 @@ def flux_kustomizations(docs: list[dict]) -> list[dict]:
     return ordered
 
 
-def render_cloud(cloud: str, schema_dir: Path, helm_releases: dict[str, list[dict]]) -> list[tuple[str, str, bool]]:
+def render_cloud(
+    cloud: str, schema_dir: Path, helm_releases: dict[str, list[dict]], pg_clusters: list[tuple[str, dict]]
+) -> list[tuple[str, str, bool]]:
     """Build and render everything for one cloud; return (label, manifests, ignore_missing)."""
     cluster_dir = ROOT / "k8s" / "clusters" / cloud
     clusters = run(["kustomize", "build", str(cluster_dir)])
@@ -423,7 +484,12 @@ def render_cloud(cloud: str, schema_dir: Path, helm_releases: dict[str, list[dic
         outputs.append((f"{cloud}/{name} ({path})", built, False))
 
         docs = load_docs(built)
-        releases = [d for d in docs if d.get("kind") == "HelmRelease"]
+        check_never_pruned(docs, f"{cloud}/{name} ({path})")
+        pg_clusters.extend(
+            (f"{cloud}/{name}", d) for d in docs
+            if d.get("kind") == "Cluster" and d.get("apiVersion", "").startswith("postgresql.cnpg.io/")
+        )
+        releases =[d for d in docs if d.get("kind") == "HelmRelease"]
         helm_releases.setdefault(cloud, []).extend(releases)
         for hr in releases:
             if hr["metadata"]["name"] == "cilium":
@@ -433,6 +499,13 @@ def render_cloud(cloud: str, schema_dir: Path, helm_releases: dict[str, list[dic
             # Charts may render custom resources whose CRDs nothing here
             # installs; those are skipped, everything else is strict.
             outputs.append((label, manifests, True))
+
+    # Removing or renaming these would make Flux leave the running release
+    # unmanaged (prune is disabled), so make it a deliberate change here too.
+    required = {("kube-system", "cilium")} | ({("kube-system", "coredns")} if cloud == "aws" else set())
+    present = {(hr["metadata"]["namespace"], hr["metadata"]["name"]) for hr in helm_releases.get(cloud, [])}
+    if missing := sorted(required - present):
+        raise Failure(f"{cloud}: HelmRelease(s) missing: {', '.join('/'.join(m) for m in missing)}")
 
     for source, env in envs.items():
         if unused := sorted(env.keys() - used_by_file.get(source, set())):
@@ -444,11 +517,13 @@ def main() -> int:
     try:
         check_flux_version()
         helm_releases: dict[str, list[dict]] = {}
+        pg_clusters: list[tuple[str, dict]] = []
         with tempfile.TemporaryDirectory() as tmp:
             schema_dir = Path(tmp)
             # Render everything first, so the CRDs of every chart are known
             # before validating the custom resources that use them.
-            outputs = {cloud: render_cloud(cloud, schema_dir, helm_releases) for cloud in CLOUDS}
+            outputs = {cloud: render_cloud(cloud, schema_dir, helm_releases, pg_clusters) for cloud in CLOUDS}
+            check_postgres_images(pg_clusters)
             print(f"strict schemas generated from installed CRDs: {sum(1 for _ in schema_dir.rglob('*.json'))}")
             for cloud, items in outputs.items():
                 print(f"== {cloud}")

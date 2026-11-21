@@ -1,0 +1,15 @@
+# The PostgreSQL image for every CloudNativePG Cluster, defined once. The GKE
+# replica replays the EKS primary's WAL, which only works on the same major
+# version, so both must always run the same image. Bump it here only.
+# The validator (scripts/validate_k8s.py) fails if the rendered Clusters differ
+# or the image isn't pinned by digest.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+patches:
+  - target:
+      group: postgresql.cnpg.io
+      kind: Cluster
+    patch: |-
+      - op: add
+        path: /spec/imageName
+        value: ghcr.io/cloudnative-pg/postgresql:18.7-standard-trixie@sha256:5827829071060876c4029650c04183e4ee562da3ebb9e88c914d67c8dc8669d6
