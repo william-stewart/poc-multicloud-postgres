@@ -18,6 +18,14 @@ locals {
     gcp = "us-central1-a"
   }
 
+  # Same Kubernetes minor on both clouds. 1.36 is the newest version that is
+  # both in EKS standard support (1.34-1.37) and e2e-tested by Cilium 1.20
+  # (1.33-1.36). The GKE stack checks at plan time that GKE offers it.
+  kubernetes = {
+    version    = "1.36"
+    node_count = 2
+  }
+
   # Lowercase keys and values are valid as both AWS tags and GCP labels,
   # so one cost or inventory query works across clouds.
   labels = {

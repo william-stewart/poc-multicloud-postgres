@@ -17,6 +17,11 @@ run "default_address_plan_is_valid" {
   }
 
   assert {
+    condition     = can(regex("^1\\.[0-9]+$", output.kubernetes.version)) && output.kubernetes.node_count >= 2
+    error_message = "kubernetes.version must be a minor version like 1.36, with at least 2 nodes per cluster."
+  }
+
+  assert {
     condition     = startswith(output.zones.gcp, output.regions.gcp)
     error_message = "The GKE zone must be in the GCP region."
   }

@@ -18,6 +18,11 @@ output "cidrs" {
   value       = var.cidrs
 }
 
+output "kubernetes" {
+  description = "Cluster settings shared by both clouds: { version, node_count }."
+  value       = local.kubernetes
+}
+
 output "labels" {
   description = "Base labels, valid as both AWS tags and GCP labels."
   value       = local.labels
