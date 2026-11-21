@@ -1,5 +1,6 @@
 # EKS: the shared rules plus IRSA's STS calls, streaming between the two
-# primary instances, and application access to the primary.
+# primary instances, application access to the primary, and reading
+# pg-replica's GCS archive.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
@@ -8,3 +9,4 @@ resources:
   - allow-sts.yaml
   - allow-pg-primary-instances.yaml
   - allow-app-to-primary.yaml
+  - allow-google-apis.yaml

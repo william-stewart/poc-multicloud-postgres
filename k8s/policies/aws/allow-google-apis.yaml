@@ -1,0 +1,21 @@
+# Rule 10: pg-primary reads pg-replica's GCS archive through Workload Identity
+# Federation: it exchanges its service account token at Google's STS, then
+# reads from Cloud Storage. HTTPS only, by name.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-google-apis
+  namespace: cnpg-db
+spec:
+  endpointSelector:
+    matchExpressions:
+      - key: cnpg.io/cluster
+        operator: Exists
+  egress:
+    - toFQDNs:
+        - matchName: sts.googleapis.com
+        - matchName: storage.googleapis.com
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP

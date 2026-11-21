@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# Store the outputs of infra/30-data/aws (and, on GCP, infra/30-data/gcp) in
-# the flux-system/data-vars ConfigMap, which the data and policies
-# Kustomizations substitute from. Until it exists, Flux applies neither, so
-# the database never starts with an empty bucket name or role.
+# Store the outputs of infra/30-data/aws and infra/30-data/gcp in the
+# flux-system/data-vars ConfigMap, which the data and policies Kustomizations
+# substitute from. Until it exists, Flux applies neither, so the database
+# never starts with an empty bucket name or role. On EKS it also stores
+# pg-primary's GCS credential configuration (no key in it) in the
+# cnpg-db/gcs-reader Secret.
 #
-# Usage, after `tofu apply` in infra/30-data/aws (and infra/30-data/gcp for
-# gcp) and `make bootstrap`:
+# Usage, after `tofu apply` in both infra/30-data stacks and `make bootstrap`:
 #   k8s/data-vars.sh <aws|gcp> <kube-context>
 #
 # On GCP it refuses to run until the replica can actually bootstrap: the
@@ -39,7 +40,13 @@ case $cloud in
       echo "WAL_BUCKET=$(tofu -chdir=infra/30-data/aws output -raw wal_bucket)"
       echo "WAL_WRITER_ROLE_ARN=$(tofu -chdir=infra/30-data/aws output -raw wal_writer_role_arn)"
       echo "WAL_BUCKET_REGION=$(tofu -chdir=infra/30-data/aws output -raw wal_bucket_region)"
+      echo "GCS_WAL_BUCKET=$(tofu -chdir=infra/30-data/gcp output -raw wal_bucket)"
     } >"$vars"
+    # Not a secret (it names a token file and a provider), but the Barman
+    # Cloud plugin only reads GCS credentials from a Secret.
+    kc --namespace cnpg-db create secret generic gcs-reader \
+      --from-file=credentials.json=<(tofu -chdir=infra/30-data/gcp output -raw eks_reader_credential_config) \
+      --dry-run=client -o yaml | kc apply --server-side --field-manager=data-vars -f -
     ;;
   gcp)
     require_tools aws

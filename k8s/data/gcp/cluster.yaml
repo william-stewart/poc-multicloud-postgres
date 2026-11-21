@@ -1,5 +1,6 @@
-# Replica cluster: bootstraps from the primary's latest base backup in S3, then
-# keeps replaying WAL from the archive. There is no network path between the
+# The GKE member of the distributed topology: a replica cluster while
+# replica.primary names pg-primary. It bootstraps from pg-primary's latest base
+# backup in S3, then keeps replaying WAL from that archive. There is no network path between the
 # clouds; replication lag is bounded by the primary's archive_timeout (60s).
 #
 # It also keeps its own archive in GCS (gcs-store): every WAL segment it
@@ -7,7 +8,8 @@
 # GCP side never depends on S3 to recover, and a promoted replica already has
 # somewhere to archive, under its own name (pg-replica/), never pg-primary/.
 #
-# Promotion (manual, documented): set replica.enabled to false.
+# Switchover, failover and failback change replica.primary on both Clusters;
+# see "Switchover, failover and failback" in the README.
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
@@ -22,13 +24,21 @@ spec:
   # primary: replaying its WAL needs the same PostgreSQL major.
   enableSuperuserAccess: false
 
+  # Which member is the primary of the whole topology, and where this one
+  # replays from while it isn't.
   replica:
-    enabled: true
-    source: origin
+    primary: pg-primary
+    source: pg-primary
 
   bootstrap:
     recovery:
-      source: origin
+      source: pg-primary
+
+  postgresql:
+    parameters:
+      # Only takes effect while this cluster is the primary: then it ships WAL
+      # to GCS at least every minute, as pg-primary does to S3.
+      archive_timeout: "60s"
 
   # WAL archiving and base backups go to GCS. CloudNativePG runs a replica
   # cluster with archive_mode=always, so this archives the WAL it replays.
@@ -45,15 +55,21 @@ spec:
       annotations:
         iam.gke.io/gcp-service-account: ${GCS_WAL_WRITER_SA}
 
-  # The primary, as seen through its archive, read-only: the reader IAM user
-  # can't write to S3, so this cluster never writes to the primary's archive.
+  # The distributed topology: every Cluster lists every member, each read
+  # through its archive. pg-primary's S3 archive is read-only from here. The validator checks both sides agree.
   externalClusters:
-    - name: origin
+    - name: pg-primary
       plugin:
         name: barman-cloud.cloudnative-pg.io
         parameters:
           barmanObjectName: aws-store-ro
           serverName: pg-primary
+    - name: pg-replica
+      plugin:
+        name: barman-cloud.cloudnative-pg.io
+        parameters:
+          barmanObjectName: gcs-store
+          serverName: pg-replica
 
   storage:
     size: 10Gi
