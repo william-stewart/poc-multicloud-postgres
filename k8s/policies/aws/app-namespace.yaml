@@ -1,0 +1,6 @@
+# Applications that use the database run here; only this namespace may reach
+# the primary (allow-app-to-primary.yaml).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: app

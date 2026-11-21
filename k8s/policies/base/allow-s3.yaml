@@ -1,0 +1,21 @@
+# Rule 5: WAL archive and base backups in S3 (written on EKS, read on GKE),
+# HTTPS only, to the bucket's regional endpoints by name. Covers the database
+# pods and CloudNativePG's jobs (recovery, join), which all carry cnpg.io/cluster.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-s3
+  namespace: cnpg-db
+spec:
+  endpointSelector:
+    matchExpressions:
+      - key: cnpg.io/cluster
+        operator: Exists
+  egress:
+    - toFQDNs:
+        - matchName: s3.${WAL_BUCKET_REGION}.amazonaws.com
+        - matchPattern: "*.s3.${WAL_BUCKET_REGION}.amazonaws.com"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP

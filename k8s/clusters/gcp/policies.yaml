@@ -1,0 +1,24 @@
+# Network policies for cnpg-db: default deny plus the flows the databases need.
+# Applied only after the data layer is healthy (dependsOn + wait), so a policy
+# mistake can't be confused with a replication setup problem.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: policies
+  namespace: flux-system
+spec:
+  dependsOn:
+    - name: data
+  interval: 10m
+  retryInterval: 2m
+  timeout: 10m
+  path: ./k8s/policies/gcp
+  prune: true
+  wait: true
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  postBuild:
+    substituteFrom:
+      - kind: ConfigMap
+        name: data-vars

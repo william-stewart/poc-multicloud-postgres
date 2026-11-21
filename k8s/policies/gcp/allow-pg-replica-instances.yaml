@@ -1,0 +1,31 @@
+# Rule 4: pg-replica has one instance today; if it's scaled up, its instances
+# stream from the designated primary (5432) and check each other (8000).
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-pg-replica-instances
+  namespace: cnpg-db
+spec:
+  endpointSelector:
+    matchLabels:
+      cnpg.io/cluster: pg-replica
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            cnpg.io/cluster: pg-replica
+      toPorts:
+        - ports:
+            - port: "5432"
+              protocol: TCP
+            - port: "8000"
+              protocol: TCP
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            cnpg.io/cluster: pg-replica
+      toPorts:
+        - ports:
+            - port: "5432"
+              protocol: TCP
+            - port: "8000"
+              protocol: TCP

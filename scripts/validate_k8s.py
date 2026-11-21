@@ -13,7 +13,8 @@ For each cloud:
      and check each values key against the chart's values.schema.json. Many
      charts' schemas list every key but still accept unknown ones, so a typo
      or a key removed in a new chart version would otherwise be ignored.
-  4. Turn every CRD that Flux and the pinned charts install into a strict JSON
+  4. Turn every CRD that Flux, the pinned charts and the pinned Cilium release
+     (CiliumNetworkPolicy) install into a strict JSON
      schema (unknown fields rejected), and validate all of the above with
      kubeconform against those schemas, Kubernetes 1.36, and a pinned CRD
      catalog as a fallback.
@@ -106,20 +107,29 @@ def substitute(text: str, env: dict[str, str], where: str) -> tuple[str, set[str
 # --- Schemas from CRDs -----------------------------------------------------
 
 
-def strict_schema(node):
-    """Convert a CRD openAPIV3Schema into a JSON schema that rejects unknown fields."""
+COMBINATORS = ("anyOf", "oneOf", "allOf", "not")
+
+
+def strict_schema(node, strict: bool = True):
+    """Convert a CRD openAPIV3Schema into a JSON schema that rejects unknown fields.
+
+    Branches of anyOf/oneOf/allOf/not express constraints (for example "at
+    least one of ingress or egress"), not the object's shape, so nothing
+    inside them is made strict: a branch listing only `ingress` must not
+    reject `endpointSelector`.
+    """
     if isinstance(node, list):
-        return [strict_schema(n) for n in node]
+        return [strict_schema(n, strict) for n in node]
     if not isinstance(node, dict):
         return node
-    node = {k: strict_schema(v) for k, v in node.items()}
+    node = {k: strict_schema(v, strict and k not in COMBINATORS) for k, v in node.items()}
     if node.pop("x-kubernetes-int-or-string", False):
         node.pop("type", None)
         node["oneOf"] = [{"type": "string"}, {"type": "integer"}]
     if node.pop("nullable", False) and isinstance(node.get("type"), str):
         node["type"] = [node["type"], "null"]
     preserve = node.pop("x-kubernetes-preserve-unknown-fields", False)
-    if "properties" in node and "additionalProperties" not in node and not preserve:
+    if strict and "properties" in node and "additionalProperties" not in node and not preserve:
         node["additionalProperties"] = False
     return node
 
@@ -140,6 +150,23 @@ def collect_crd_schemas(docs: list[dict], schema_dir: Path) -> None:
             path = schema_dir / group / f"{kind}_{version['name']}.json"
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(json.dumps(schema))
+
+
+def cilium_crds(version: str) -> list[dict]:
+    """CiliumNetworkPolicy CRDs as the pinned Cilium release installs them.
+
+    The Cilium operator creates its CRDs at runtime from copies embedded in
+    the release, so they aren't in the chart; fetch them from the same tag.
+    """
+    docs = []
+    for name in ("ciliumnetworkpolicies", "ciliumclusterwidenetworkpolicies"):
+        cached = CACHE / f"cilium-{version}-{name}.yaml"
+        if not cached.exists():
+            CACHE.mkdir(parents=True, exist_ok=True)
+            url = f"https://raw.githubusercontent.com/cilium/cilium/v{version}/pkg/k8s/apis/cilium.io/client/crds/v2/{name}.yaml"
+            run(["curl", "-fsSL", "-o", str(cached), url])
+        docs += load_docs(cached.read_text())
+    return docs
 
 
 def kubeconform(manifests: str, label: str, schema_dir: Path, ignore_missing: bool = False) -> None:
@@ -396,7 +423,11 @@ def render_cloud(cloud: str, schema_dir: Path, helm_releases: dict[str, list[dic
         outputs.append((f"{cloud}/{name} ({path})", built, False))
 
         docs = load_docs(built)
-        helm_releases.setdefault(cloud, []).extend(d for d in docs if d.get("kind") == "HelmRelease")
+        releases = [d for d in docs if d.get("kind") == "HelmRelease"]
+        helm_releases.setdefault(cloud, []).extend(releases)
+        for hr in releases:
+            if hr["metadata"]["name"] == "cilium":
+                collect_crd_schemas(cilium_crds(hr["spec"]["chart"]["spec"]["version"]), schema_dir)
         for label, manifests in render_helm_releases(docs, cloud):
             collect_crd_schemas(load_docs(manifests), schema_dir)
             # Charts may render custom resources whose CRDs nothing here

@@ -1,0 +1,13 @@
+# Rule 0: deny all ingress and egress for every pod in cnpg-db. A plain
+# NetworkPolicy, so the default stays in place even if a Cilium rule is
+# removed. Cilium combines it with the allow rules in this directory.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: cnpg-db
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress

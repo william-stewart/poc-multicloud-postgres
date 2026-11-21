@@ -1,0 +1,16 @@
+# Rule 2: the CloudNativePG instance manager (and its jobs) watch their
+# Cluster, Secrets and ConfigMaps through the Kubernetes API.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-kube-apiserver
+  namespace: cnpg-db
+spec:
+  endpointSelector: {}
+  egress:
+    - toEntities:
+        - kube-apiserver
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP

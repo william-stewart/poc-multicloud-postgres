@@ -1,0 +1,11 @@
+# Network policies for the database namespace, shared by both clusters.
+# Default deny for every pod in cnpg-db, then Cilium rules that open exactly the
+# flows the databases need. Each cloud's overlay adds its own rules.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - default-deny.yaml
+  - allow-dns.yaml
+  - allow-kube-apiserver.yaml
+  - allow-operator-and-probes.yaml
+  - allow-s3.yaml

@@ -1,0 +1,32 @@
+# Rule 4: the two pg-primary instances stream WAL to each other and use
+# pg_rewind after a failover (5432), and check each other's status (8000).
+# Also covers CloudNativePG's join job, which clones a new instance.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-pg-primary-instances
+  namespace: cnpg-db
+spec:
+  endpointSelector:
+    matchLabels:
+      cnpg.io/cluster: pg-primary
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            cnpg.io/cluster: pg-primary
+      toPorts:
+        - ports:
+            - port: "5432"
+              protocol: TCP
+            - port: "8000"
+              protocol: TCP
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            cnpg.io/cluster: pg-primary
+      toPorts:
+        - ports:
+            - port: "5432"
+              protocol: TCP
+            - port: "8000"
+              protocol: TCP

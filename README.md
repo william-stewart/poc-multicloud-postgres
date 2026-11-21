@@ -21,6 +21,7 @@ run Cilium as the only CNI, with default-deny network policies.
 | `k8s/clusters/{aws,gcp}` | Flux + kustomize | Per-cluster entry point: Git sync and the platform Kustomization |
 | `k8s/platform/{base,aws,gcp}` | Flux `HelmRelease` + kustomize | Cilium, CoreDNS (EKS), cert-manager, CloudNativePG, Barman Cloud plugin, EBS CSI driver (EKS) |
 | `k8s/data/{base,aws,gcp}` | Flux + kustomize | The PostgreSQL clusters, their object stores and backups |
+| `k8s/policies/{base,aws,gcp}` | Flux + kustomize | Default-deny network policies for `cnpg-db`, plus Cilium allow rules |
 
 OpenTofu manages cloud primitives only. It has no Helm or Kubernetes providers,
 and a pre-commit hook enforces that. Everything inside the clusters is reconciled
@@ -208,7 +209,9 @@ a plain `values.yaml` next to it (shared values in `base/`, cloud values in the
 overlay). Account-specific values, such as the EKS API host and IAM role ARNs, are
 not in git. `bootstrap.sh` writes them from `tofu output` into the
 `flux-system/cluster-vars` ConfigMap, and Flux substitutes them into the manifests.
-`cluster-vars.example.env` lists them for each cluster.
+`cluster-vars.example.env` lists them for each cluster. Flux runs with strict
+substitution: a manifest that uses a variable missing from its ConfigMap fails
+to apply, instead of getting an empty string.
 
 The Flux install manifests are committed (`make flux-manifests`), not created by
 `flux bootstrap`, which would push to `main` directly. Controller images are pinned
@@ -316,6 +319,48 @@ kubectl --context "$GKE" -n cnpg-db get cluster pg-replica -w
 archives WAL anywhere, give it its own prefix or bucket and a writer identity; it
 must never archive to `pg-primary/`.
 
+## Network policies (`k8s/policies`)
+
+Every pod in `cnpg-db` starts from **default deny** for ingress and egress (a plain
+Kubernetes `NetworkPolicy`). `CiliumNetworkPolicy` rules then open exactly the
+flows the databases need, using Cilium's entities and FQDN rules:
+
+| # | Direction | From → to | Ports | Cluster | File |
+| --- | --- | --- | --- | --- | --- |
+| 0 | Both | Everything in `cnpg-db` | all | Both | `base/default-deny.yaml` |
+| 1 | Egress | All pods → `kube-dns` in `kube-system`, through Cilium's DNS proxy | 53 UDP/TCP | Both | `base/allow-dns.yaml` |
+| 2 | Egress | All pods → entity `kube-apiserver` | 443 | Both | `base/allow-kube-apiserver.yaml` |
+| 3 | Ingress | CloudNativePG operator (`cnpg-system`) → instances; kubelet probes from the node | 8000, 5432; probes 8000 | Both | `base/allow-operator-and-probes.yaml` |
+| 4 | Both | Instance ↔ instance of the same cluster (and its join job) | 5432, 8000 | Both | `<cloud>/allow-pg-*-instances.yaml` |
+| 5 | Egress | Database pods → `s3.<region>.amazonaws.com`, `*.s3.<region>.amazonaws.com` | 443 | Both | `base/allow-s3.yaml` |
+| 6 | Egress | Database pods → `sts.<region>.amazonaws.com`, `sts.amazonaws.com` (IRSA) | 443 | EKS | `aws/allow-sts.yaml` |
+| 7 | Ingress | Namespace `app` → the current primary only (`cnpg.io/instanceRole: primary`) | 5432 | EKS | `aws/allow-app-to-primary.yaml` |
+
+Prometheus scraping (port 9187) isn't opened, because nothing scrapes it yet.
+
+The policies are their own Flux Kustomization, which depends on `data` and waits
+for it to be healthy, so they're applied only once replication works. A policy
+mistake then shows up as a new drop, not as a setup problem. The S3 and STS
+hostnames use the bucket region from the `data-vars` ConfigMap.
+
+Verify with Hubble on each cluster:
+
+```sh
+# Before the policies land: record the real flows (each should map to a rule above).
+hubble observe -n cnpg-db --since 10m -o compact
+
+# After: watch for drops while forcing a WAL switch and a backup.
+hubble observe -n cnpg-db --verdict DROPPED -f
+
+# Negative tests (EKS): no access from default, no internet egress; app can connect.
+kubectl run probe --rm -it -n default --image=postgres:18 -- pg_isready -h pg-primary-rw.cnpg-db -t 5   # fails
+kubectl exec -n cnpg-db pg-primary-1 -c postgres -- curl -m 5 https://example.com                         # fails
+kubectl run probe --rm -it -n app --image=postgres:18 -- pg_isready -h pg-primary-rw.cnpg-db -t 5       # succeeds
+
+kubectl cnpg status pg-primary -n cnpg-db   # EKS: continuous archiving still OK
+kubectl cnpg status pg-replica -n cnpg-db   # GKE: still replaying WAL
+```
+
 ## Local validation
 
 Tool versions are pinned in `.tool-versions`. On macOS:
@@ -337,8 +382,9 @@ make validate   # every local check; no cloud credentials needed
 4. Kubernetes layer (`scripts/validate_k8s.py`, part of pre-commit), for every Flux
    layer of each cluster:
    - kustomize builds validated with kubeconform against Kubernetes 1.36 and strict
-     schemas generated from the CRDs that Flux and the pinned charts install, so a
-     misspelled field in a `Cluster` or `ObjectStore` fails
+     schemas generated from the CRDs that Flux, the pinned charts and the pinned
+     Cilium release install, so a misspelled field in a `Cluster`, `ObjectStore` or
+     `CiliumNetworkPolicy` fails
    - `helm template` of every `HelmRelease` at its pinned version with its merged
      values, and every values key checked against the chart's schema
    - checkov's Kubernetes checks on the manifests exactly as Flux applies them
