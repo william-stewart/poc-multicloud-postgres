@@ -8,6 +8,22 @@ variable "project_id" {
   }
 }
 
+variable "eks_oidc_issuer_url" {
+  description = "OIDC issuer of the EKS cluster: `tofu -chdir=infra/20-clusters/aws output -raw oidc_issuer_url`. pg-primary's service account on it may read the bucket."
+  type        = string
+
+  validation {
+    condition     = can(regex("^https://oidc\\.eks\\.[a-z0-9-]+\\.amazonaws\\.com/id/[0-9A-F]{32}$", var.eks_oidc_issuer_url))
+    error_message = "eks_oidc_issuer_url must be an EKS OIDC issuer URL (https://oidc.eks.<region>.amazonaws.com/id/<32 hex characters>)."
+  }
+}
+
+variable "primary_cluster_name" {
+  description = "Name of the CloudNativePG Cluster on EKS, which is also its service account name."
+  type        = string
+  default     = "pg-primary"
+}
+
 variable "replica_cluster_name" {
   description = "Name of the CloudNativePG Cluster on GKE. It is also its service account name and its folder in the bucket."
   type        = string

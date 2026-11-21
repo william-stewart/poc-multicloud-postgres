@@ -18,6 +18,11 @@ output "wal_kms_key_id" {
   value       = google_kms_crypto_key.wal.id
 }
 
+output "eks_workload_identity_pool_id" {
+  description = "Workload Identity pool that 30-data/gcp adds the EKS cluster's OIDC provider to."
+  value       = google_iam_workload_identity_pool.eks.workload_identity_pool_id
+}
+
 output "backend_config" {
   description = "Values for `tofu init -backend-config=...` in the GCP stacks (add a per-stack prefix)."
   value = {

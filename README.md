@@ -99,7 +99,7 @@ These two stacks keep their own state locally (gitignored) because they create t
 remote backends; keep those files. They are never torn down: buckets and keys have
 `prevent_destroy`, and the GKE Secrets key and the GCS WAL bucket's key live here
 because Cloud KMS keys can never be deleted. If you set up the GCP stack before the WAL
-key existed, apply it again to add the key.
+key and the EKS Workload Identity pool existed, apply it again to add them.
 
 ### 2. Networks
 
@@ -179,7 +179,8 @@ hubble observe -n cnpg-db --verdict DROPPED -f
 ### 6. Replica on GKE
 
 ```sh
-gcp_init 30-data/gcp && tofu -chdir=infra/30-data/gcp apply -var project_id="$GCP_PROJECT"
+gcp_init 30-data/gcp && tofu -chdir=infra/30-data/gcp apply -var project_id="$GCP_PROJECT" \
+  -var eks_oidc_issuer_url="$(tofu -chdir=infra/20-clusters/aws output -raw oidc_issuer_url)"
 
 make replica-credentials CONTEXT="$GKE"
 make data-vars CLOUD=gcp CONTEXT="$GKE"
@@ -262,7 +263,8 @@ kubectl --context "$EKS" get pv; kubectl --context "$GKE" get pv   # wait until 
 
 # 2. Cloud resources, top layer first. 30-data empties the buckets and removes the
 #    reader user together with the access key created in step 6.
-tofu -chdir=infra/30-data/gcp destroy -var project_id="$GCP_PROJECT"
+tofu -chdir=infra/30-data/gcp destroy -var project_id="$GCP_PROJECT" \
+  -var eks_oidc_issuer_url="$(tofu -chdir=infra/20-clusters/aws output -raw oidc_issuer_url)"
 tofu -chdir=infra/30-data/aws destroy \
   -var "replica_egress_ips=$(tofu -chdir=infra/10-network/gcp output -json nat_egress_ips)"
 tofu -chdir=infra/20-clusters/gcp destroy -var project_id="$GCP_PROJECT" -var "api_allowed_cidrs=[\"$MY_IP\"]"
@@ -319,6 +321,7 @@ different `serverName`, or a new bucket), never back into `pg-replica/` or `pg-p
 | WAL writer (IRSA, `cnpg-db/pg-primary`) | List, read, write, delete | `pg-primary/`, through the VPC's S3 gateway endpoint; the KMS key through S3 |
 | WAL reader (IAM user, GKE) | List, read | `pg-primary/`, from the GCP Cloud NAT IP; decrypt through S3 |
 | GCS WAL writer (Workload Identity, `cnpg-db/pg-replica`) | List, read, write, delete objects; read bucket metadata | The GCS WAL bucket; no project-level roles |
+| GCS WAL reader (Workload Identity Federation, `cnpg-db/pg-primary` on EKS) | List, read objects; read bucket metadata | The GCS WAL bucket; only tokens from this EKS cluster's issuer for this service account |
 | Cilium operator (IRSA) | The ENI calls in Cilium's docs | This account and region |
 | EBS CSI driver (IRSA) | AWS's EBS CSI policy | |
 
@@ -369,7 +372,7 @@ stack's state file.
 | `infra/10-network/{aws,gcp}` | VPCs, subnets, NAT, S3 gateway endpoint, firewall |
 | `infra/20-clusters/{aws,gcp}` | EKS and GKE without a default CNI; IRSA roles |
 | `infra/30-data/aws` | S3 WAL bucket, KMS key, writer role, reader user |
-| `infra/30-data/gcp` | GCS WAL bucket for the replica's own archive, its Workload Identity writer |
+| `infra/30-data/gcp` | GCS WAL bucket for the replica's own archive, its Workload Identity writer, and the EKS reader through Workload Identity Federation |
 | `infra/tests/contracts` | Contract tests for the per-cloud modules |
 | `k8s/flux` | Flux controllers (generated, images pinned by digest) |
 | `k8s/clusters/{aws,gcp}` | Each cluster's Flux entry point and `*.example.env` variable lists |
