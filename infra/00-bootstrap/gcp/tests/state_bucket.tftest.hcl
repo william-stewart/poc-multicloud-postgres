@@ -43,6 +43,15 @@ run "state_bucket_is_private_and_encrypted" {
   }
 }
 
+run "gke_secrets_key_is_long_lived" {
+  command = plan
+
+  assert {
+    condition     = google_kms_crypto_key.gke_secrets.rotation_period == "7776000s" && google_kms_key_ring.gke.location == "us-central1"
+    error_message = "The GKE secrets key must rotate every 90 days and sit in the cluster's region."
+  }
+}
+
 run "rejects_invalid_project_id" {
   command = plan
 
