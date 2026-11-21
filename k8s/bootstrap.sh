@@ -30,22 +30,16 @@ context=$2
 cd "$(git rev-parse --show-toplevel)"
 deploy_key=${3:-secrets/flux-deploy-key}
 [[ $cloud == aws || $cloud == gcp ]] || usage
+# shellcheck source=k8s/lib.sh
+source k8s/lib.sh
 
-for tool in tofu kubectl helm flux; do
-  command -v "$tool" >/dev/null || { echo "missing tool: $tool" >&2; exit 1; }
-done
+require_tools tofu kubectl helm flux
 [[ -f $deploy_key ]] || { echo "deploy key not found: $deploy_key (see README)" >&2; exit 1; }
 
-kc() { kubectl --context "$context" "$@"; }
 out() { tofu -chdir="infra/20-clusters/$cloud" output -raw "$1"; }
 
-# Refuse to touch a cluster other than the one this stack built.
+check_cluster_context "$cloud"
 endpoint=$(out cluster_endpoint)
-server=$(kubectl config view --minify --context "$context" -o jsonpath='{.clusters[0].cluster.server}')
-if [[ ${server%/} != "${endpoint%/}" ]]; then
-  echo "context $context points at $server, but infra/20-clusters/$cloud built $endpoint" >&2
-  exit 1
-fi
 
 workdir=$(mktemp -d)
 trap 'rm -rf "$workdir"' EXIT
@@ -70,12 +64,7 @@ case $cloud in
     ;;
 esac
 
-# The variables must be exactly the ones the manifests expect.
-example="k8s/clusters/$cloud/cluster-vars.example.env"
-if ! diff <(grep -Ev '^(#|$)' "$example" | cut -d= -f1 | sort) <(cut -d= -f1 "$vars" | sort) >/dev/null; then
-  echo "collected variables don't match $example" >&2
-  exit 1
-fi
+check_vars_match "k8s/clusters/$cloud/cluster-vars.example.env" "$vars"
 
 # The values files reference ${VARS}; export them for flux envsubst.
 set -a
@@ -86,9 +75,7 @@ set +a
 render() { flux envsubst --strict <"$1" >"$2"; }
 
 echo "==> flux-system/cluster-vars ConfigMap"
-kc create namespace flux-system --dry-run=client -o yaml | kc apply -f -
-kc --namespace flux-system create configmap cluster-vars --from-env-file="$vars" \
-  --dry-run=client -o yaml | kc apply -f -
+apply_flux_configmap cluster-vars "$vars"
 
 echo "==> Cilium $CILIUM_VERSION"
 render k8s/platform/base/cilium/values.yaml "$workdir/cilium-base.yaml"

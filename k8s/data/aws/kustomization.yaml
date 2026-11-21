@@ -1,0 +1,10 @@
+# Primary PostgreSQL cluster on EKS, archiving WAL and base backups to S3.
+# ${VARS} come from the flux-system/data-vars ConfigMap (make data-vars),
+# filled from `tofu output` in infra/30-data/aws.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../base
+  - objectstore.yaml
+  - cluster.yaml
+  - scheduledbackup.yaml

@@ -25,6 +25,7 @@ images:
     digest: sha256:1405a9e460833df9aff920664243c0df271f42be05e0bf38db31d2b7e9ebbaab
 
 # Accepted checkov findings on Flux's own manifests, recorded where they apply.
+# (Pinning images by digest already satisfies the pull-policy check.)
 # Strategic-merge patches add these annotations without replacing any that
 # upstream sets. With a target, the name in each patch is ignored.
 patches:
@@ -37,9 +38,8 @@ patches:
       metadata:
         name: all-flux-controllers
         annotations:
-          checkov.io/skip1: CKV_K8S_15=Images are pinned by digest, so pulling on every start adds nothing.
-          checkov.io/skip2: CKV_K8S_38=The controllers manage cluster resources and need their service account tokens.
-          checkov.io/skip3: CKV_K8S_40=Flux runs as non-root with a read-only root filesystem; the UID is set by the upstream image.
+          checkov.io/skip1: CKV_K8S_38=The controllers manage cluster resources and need their service account tokens.
+          checkov.io/skip2: CKV_K8S_40=Flux runs as non-root with a read-only root filesystem; the UID is set by the upstream image.
   - target:
       kind: ClusterRole
     patch: |

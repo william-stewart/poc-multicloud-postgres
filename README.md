@@ -16,10 +16,11 @@ run Cilium as the only CNI, with default-deny network policies.
 | `infra/00-bootstrap/{aws,gcp}` | OpenTofu | Remote state buckets (S3 with native locking, GCS) |
 | `infra/10-network/{aws,gcp}` | OpenTofu | VPCs, subnets, NAT, S3 gateway endpoint |
 | `infra/20-clusters/{aws,gcp}` | OpenTofu | EKS and GKE without a default CNI |
-| `infra/30-data/aws` | OpenTofu | WAL bucket and IAM |
+| `infra/30-data/aws` | OpenTofu | WAL bucket, KMS key, IRSA writer role, read-only replica user |
 | `k8s/flux` | Flux | Flux controllers and CRDs, the same on both clusters |
 | `k8s/clusters/{aws,gcp}` | Flux + kustomize | Per-cluster entry point: Git sync and the platform Kustomization |
 | `k8s/platform/{base,aws,gcp}` | Flux `HelmRelease` + kustomize | Cilium, CoreDNS (EKS), cert-manager, CloudNativePG, Barman Cloud plugin, EBS CSI driver (EKS) |
+| `k8s/data/{base,aws}` | Flux + kustomize | The PostgreSQL clusters, their object stores and backups |
 
 OpenTofu manages cloud primitives only. It has no Helm or Kubernetes providers,
 and a pre-commit hook enforces that. Everything inside the clusters is reconciled
@@ -241,6 +242,45 @@ flux --context poc-mcpg get helmreleases -A
 cilium --context poc-mcpg status --wait
 ```
 
+## Primary database (EKS)
+
+`pg-primary` in the `cnpg-db` namespace runs 2 PostgreSQL 18.7 instances, one per
+node, on encrypted gp3 volumes. The Barman Cloud plugin archives WAL and base
+backups to `s3://<wal bucket>/pg-primary/`:
+
+- `archive_timeout = 60s`, so even a quiet database ships WAL every minute; that
+  sets the replica's lag at about a minute
+- a base backup is taken as soon as the cluster is ready (the GKE replica can't
+  bootstrap without one), then nightly at 02:00 UTC; Barman keeps 7 days
+- the image is pinned by digest, and Flux never prunes the `Cluster`
+
+| Identity | Can | Limited to |
+| --- | --- | --- |
+| Writer: IRSA role for the `cnpg-db/pg-primary` service account | List, read, write and delete objects | `pg-primary/` in the WAL bucket, only through the VPC's S3 gateway endpoint; the KMS key only through S3 |
+| Reader: IAM user for the GKE replica | List and read objects | `pg-primary/`, only from the GCP Cloud NAT IP; decrypt only through S3 |
+
+The bucket is versioned, KMS-encrypted, private and TLS-only; superseded objects
+expire after 7 days. No access key exists in OpenTofu: the replica's key is created
+in the next phase and goes straight into a Kubernetes Secret. GKE can't use IRSA;
+replacing the reader user with Workload Identity Federation is a follow-up.
+
+The data layer is its own Flux Kustomization, which depends on the platform. Its
+values (bucket and writer role) come from `infra/30-data/aws` through the
+`flux-system/data-vars` ConfigMap. Until that ConfigMap exists, Flux applies
+nothing, so the database can't start with empty values.
+
+```sh
+tofu -chdir=infra/30-data/aws init \
+  -backend-config="bucket=$(tofu -chdir=infra/00-bootstrap/aws output -raw state_bucket)" \
+  -backend-config="region=us-east-1" \
+  -backend-config="kms_key_id=$(tofu -chdir=infra/00-bootstrap/aws output -raw state_kms_key_arn)"
+tofu -chdir=infra/30-data/aws plan \
+  -var "replica_egress_ips=$(tofu -chdir=infra/10-network/gcp output -json nat_egress_ips)"
+
+make data-vars CLOUD=aws CONTEXT=poc-mcpg
+kubectl --context poc-mcpg -n cnpg-db get cluster,backup -w
+```
+
 ## Local validation
 
 Tool versions are pinned in `.tool-versions`. On macOS:
@@ -259,12 +299,16 @@ make validate   # every local check; no cloud credentials needed
 3. `pre-commit run --all-files`: gitleaks, checkov, trivy, tflint, shellcheck, file
    hygiene, and project guardrails (no `aws_iam_access_key`, no in-cluster providers in
    OpenTofu, per-cloud modules match their shared interface)
-4. Kubernetes layer (`scripts/validate_k8s.py`, part of pre-commit): kustomize builds
-   of every cluster and overlay, validated with kubeconform against Kubernetes 1.36
-   and the Flux CRD schemas; `helm template` of every `HelmRelease` at its pinned
-   version with its merged values; every values key checked against the chart's
-   schema; `${VARS}` checked against `cluster-vars.example.env`; and the versions
-   in `bootstrap.sh` and the Flux image digests checked against what Flux manages
+4. Kubernetes layer (`scripts/validate_k8s.py`, part of pre-commit), for every Flux
+   layer of each cluster:
+   - kustomize builds validated with kubeconform against Kubernetes 1.36 and strict
+     schemas generated from the CRDs that Flux and the pinned charts install, so a
+     misspelled field in a `Cluster` or `ObjectStore` fails
+   - `helm template` of every `HelmRelease` at its pinned version with its merged
+     values, and every values key checked against the chart's schema
+   - checkov's Kubernetes checks on the manifests exactly as Flux applies them
+   - `${VARS}` checked against the `*.example.env` files, and the versions in
+     `bootstrap.sh` and the Flux image digests against what Flux manages
 5. `gitleaks git` over the full history
 
 Commit messages are checked against Conventional Commits by a `commit-msg` hook.

@@ -1,0 +1,56 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: pg-primary
+  namespace: cnpg-db
+  annotations:
+    # Never let a change in git delete the database: Flux won't prune it.
+    kustomize.toolkit.fluxcd.io/prune: disabled
+spec:
+  instances: 2
+  # PostgreSQL 18.7, pinned by digest. The GKE replica must use the same major.
+  imageName: ghcr.io/cloudnative-pg/postgresql:18.7-standard-trixie@sha256:5827829071060876c4029650c04183e4ee562da3ebb9e88c914d67c8dc8669d6
+  primaryUpdateStrategy: unsupervised
+
+  bootstrap:
+    initdb:
+      database: app
+      owner: app
+  enableSuperuserAccess: false
+
+  postgresql:
+    parameters:
+      # Switch WAL segments at least every minute, so a quiet database still
+      # ships WAL to S3 and the replica lags by about a minute at most.
+      archive_timeout: "60s"
+
+  # WAL archiving and base backups go through the Barman Cloud plugin.
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: aws-store
+
+  # The instances (and the plugin's sidecar) run as the pg-primary service
+  # account, which the writer role in infra/30-data/aws trusts.
+  serviceAccountTemplate:
+    metadata:
+      annotations:
+        eks.amazonaws.com/role-arn: ${WAL_WRITER_ROLE_ARN}
+
+  storage:
+    size: 10Gi
+    storageClass: gp3
+
+  # One instance per node, so losing a node never loses both.
+  affinity:
+    enablePodAntiAffinity: true
+    podAntiAffinityType: required
+    topologyKey: kubernetes.io/hostname
+
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      memory: 1Gi

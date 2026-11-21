@@ -1,0 +1,26 @@
+# Database layer: the primary CloudNativePG cluster and its S3 archive.
+# It needs the CRDs from the platform layer, and values from
+# infra/30-data/aws, which `make data-vars` stores in the data-vars ConfigMap.
+# Until that ConfigMap exists, Flux reports this Kustomization as not ready and
+# applies nothing, so the database never starts with empty bucket or role values.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: data
+  namespace: flux-system
+spec:
+  dependsOn:
+    - name: platform
+  interval: 10m
+  retryInterval: 2m
+  timeout: 20m
+  path: ./k8s/data/aws
+  prune: true
+  wait: true
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  postBuild:
+    substituteFrom:
+      - kind: ConfigMap
+        name: data-vars
