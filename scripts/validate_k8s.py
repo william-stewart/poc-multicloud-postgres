@@ -77,8 +77,19 @@ def run(cmd: list[str], stdin: str | None = None) -> str:
     return result.stdout
 
 
+class Loader(yaml.SafeLoader):
+    """SafeLoader that reads a bare `=` as the string "=", as Kubernetes does.
+
+    PyYAML resolves `=` to the YAML 1.1 "value" type, which it can't
+    construct; the Prometheus Operator's CRDs list it as a relabeling enum.
+    """
+
+
+Loader.add_constructor("tag:yaml.org,2002:value", lambda loader, node: loader.construct_scalar(node))
+
+
 def load_docs(text: str) -> list[dict]:
-    return [d for d in yaml.safe_load_all(text) if d]
+    return [d for d in yaml.load_all(text, Loader=Loader) if d]
 
 
 # --- Variables -------------------------------------------------------------
