@@ -1,0 +1,21 @@
+# EKS platform: the shared base plus CoreDNS.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../base
+  - sources.yaml
+  - coredns/helmrelease.yaml
+
+generatorOptions:
+  disableNameSuffixHash: true
+  labels:
+    reconcile.fluxcd.io/watch: Enabled
+configMapGenerator:
+  - name: cilium-values-cloud
+    namespace: kube-system
+    files:
+      - values.yaml=cilium-values.yaml
+  - name: coredns-values
+    namespace: kube-system
+    files:
+      - values.yaml=coredns/values.yaml

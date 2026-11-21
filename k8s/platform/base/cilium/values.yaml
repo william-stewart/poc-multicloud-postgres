@@ -1,0 +1,22 @@
+# Cilium values shared by EKS and GKE. Cloud-specific values (IPAM, routing,
+# kube-proxy replacement) are in k8s/platform/<cloud>/cilium-values.yaml and
+# applied on top of these.
+
+# Pods get routable VPC IPs on both clouds, so no overlay network is needed.
+routingMode: native
+
+# Allow all traffic until a policy selects an endpoint, then deny what it
+# doesn't allow. Default deny is applied per namespace by k8s/policies.
+policyEnforcementMode: default
+
+hubble:
+  enabled: true
+  relay:
+    enabled: true
+  ui:
+    enabled: true
+  tls:
+    auto:
+      # Issue Hubble certificates with a CronJob instead of at every Helm
+      # upgrade, so Flux reconciles don't rotate them and cause drift.
+      method: cronJob

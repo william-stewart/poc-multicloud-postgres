@@ -1,0 +1,9 @@
+# Chart sources used only on EKS.
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: coredns
+  namespace: flux-system
+spec:
+  interval: 24h
+  url: https://coredns.github.io/helm

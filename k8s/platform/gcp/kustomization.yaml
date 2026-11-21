@@ -1,0 +1,16 @@
+# GKE platform: the shared base. GKE provides DNS (kube-dns) and the
+# Persistent Disk CSI driver itself.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../base
+
+generatorOptions:
+  disableNameSuffixHash: true
+  labels:
+    reconcile.fluxcd.io/watch: Enabled
+configMapGenerator:
+  - name: cilium-values-cloud
+    namespace: kube-system
+    files:
+      - values.yaml=cilium-values.yaml

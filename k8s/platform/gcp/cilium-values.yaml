@@ -1,0 +1,15 @@
+# GKE: Cilium is the CNI on the legacy datapath (Dataplane V2 and GKE network
+# policy are off). GKE keeps running kube-proxy, so no kube-proxy replacement.
+gke:
+  enabled: true
+ipam:
+  # Pod CIDRs are allocated by GKE from the pods secondary range.
+  mode: kubernetes
+# Traffic to the pod range is routed natively by the VPC.
+ipv4NativeRoutingCIDR: ${GKE_PODS_CIDR}
+cni:
+  # GKE's kubelet looks for CNI binaries here, not /opt/cni/bin.
+  binPath: /home/kubernetes/bin
+nodeinit:
+  # Prepares GKE nodes for Cilium before the agent starts.
+  enabled: true
