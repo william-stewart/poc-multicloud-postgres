@@ -40,7 +40,7 @@
       "id": 2,
       "type": "state-timeline",
       "title": "Role of each Cluster",
-      "description": "Primary: an instance accepts writes. Replica: it replays the other Cluster's archive. Fenced: every instance is stopped (cnpg.io/fencedInstances), as after an unplanned failover. A gap means no instance answered.",
+      "description": "Primary: an instance accepts writes. Replica: replica.primary names the other Cluster, and this one replays its archive. No primary: this Cluster should be the primary but no instance accepts writes, as during a failover between its instances or while it is being promoted. Fenced: every instance is stopped (cnpg.io/fencedInstances), as after an unplanned failover. A gap means no instance answered.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -58,7 +58,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "max by (cluster) (2 * cnpg_collector_fencing_on{cluster=~\"pg-primary|pg-replica\"}) > 0 or max by (cluster) (1 - cnpg_pg_replication_in_recovery{cluster=~\"pg-primary|pg-replica\"})",
+          "expr": "max by (cluster) (2 * cnpg_collector_fencing_on{cluster=~\"pg-primary|pg-replica\"}) > 0 or max by (cluster) (1 - cnpg_pg_replication_in_recovery{cluster=~\"pg-primary|pg-replica\"}) > 0 or (max by (cluster) (cnpg_collector_replica_mode{cluster=~\"pg-primary|pg-replica\"}) == 1) - 1 or max by (cluster) (cnpg_collector_replica_mode{cluster=~\"pg-primary|pg-replica\"}) * 0 + 3",
           "legendFormat": "{{cluster}}"
         }
       ],
@@ -78,10 +78,15 @@
                   "color": "blue",
                   "index": 1
                 },
+                "3": {
+                  "text": "No primary",
+                  "color": "red",
+                  "index": 2
+                },
                 "2": {
                   "text": "Fenced",
                   "color": "orange",
-                  "index": 2
+                  "index": 3
                 }
               }
             }
@@ -584,8 +589,8 @@
     {
       "id": 13,
       "type": "timeseries",
-      "title": "Commits per second in the app database",
-      "description": "Transactions committed per second on each Cluster's writable instance.",
+      "title": "Rows written per minute in the app database",
+      "description": "Rows inserted, updated or deleted in the app database, per Cluster. Only the primary writes, so this shows where writes land. DDL counts too: one CREATE TABLE writes dozens of system catalog rows. Transaction counts would mislead here: they include read-only queries, the metrics collector's own among them, on replicas too.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -603,13 +608,13 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (cluster) (rate(cnpg_pg_stat_database_xact_commit{cluster=~\"pg-.*\", datname=\"app\"}[1m]))",
+          "expr": "sum by (cluster) (increase(cnpg_pg_stat_database_tup_inserted{cluster=~\"pg-.*\", datname=\"app\"}[1m])) + sum by (cluster) (increase(cnpg_pg_stat_database_tup_updated{cluster=~\"pg-.*\", datname=\"app\"}[1m])) + sum by (cluster) (increase(cnpg_pg_stat_database_tup_deleted{cluster=~\"pg-.*\", datname=\"app\"}[1m]))",
           "legendFormat": "{{cluster}}"
         }
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "ops",
+          "unit": "none",
           "custom": {
             "drawStyle": "line",
             "lineWidth": 2,

@@ -290,14 +290,14 @@ port 9187. One PodMonitor scrapes them every 10s. Each scenario has its own shap
 
 | Panel | What it shows | Where the scenarios show up |
 | --- | --- | --- |
-| Role of each Cluster | Primary, replica or fenced, per Cluster | 5: the roles swap and swap back. 6: `pg-replica` turns primary, `pg-primary` fenced |
+| Role of each Cluster | Primary, replica, no primary (should be primary, nothing accepts writes) or fenced | 3: a few seconds of no primary. 5: the roles swap and swap back. 6: `pg-replica` turns primary, `pg-primary` fenced |
 | PostgreSQL up, per instance | Whether each pod's PostgreSQL answers | 3: the killed pod drops out and comes back |
 | Seconds since the last WAL segment was archived | Per Cluster, against `archive_timeout` (60s) | 4: the primary's line climbs past 60s until the store is back |
 | WAL segments each archive is behind the newest | The replica's line is the cross-cloud lag | 1 and 4: it rises while the replica waits, then drops to 0 |
 | WAL segments waiting to be archived | `.ready` files piling up on the WAL volume | 4: they pile up during the outage, then drain |
 | Failed archive attempts | Per minute | 4 |
 | Age of the last base backup, recovery window | Per archive, from the Barman Cloud plugin | 0: both archives get their first backup |
-| Commits per second | On each Cluster's writable instance | Each scenario's writes |
+| Rows written per minute | Inserts, updates and deletes in `app`, per Cluster | Where each scenario's writes land |
 
 In the end-to-end test both archives are the same local S3 server and replication
 crosses no network, so the lag is shorter than on the clouds. The dashboard isn't
