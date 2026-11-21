@@ -18,7 +18,7 @@ help: ## List targets
 
 .PHONY: tools
 tools: ## Check that every required tool is installed
-	@for t in tofu tflint trivy checkov gitleaks pre-commit; do \
+	@for t in tofu tflint trivy checkov gitleaks pre-commit helm kustomize kubeconform flux shellcheck; do \
 	  command -v $$t >/dev/null || { echo "missing: $$t"; exit 1; }; \
 	done; echo "all tools present"
 

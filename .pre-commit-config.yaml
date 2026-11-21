@@ -45,6 +45,11 @@ repos:
         stages: [commit-msg]
         args: [--strict, feat, fix, docs, chore, refactor, test, ci]
 
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: 745eface02aef23e168a8afb6b5737818efbea95  # frozen: v0.11.0.1
+    hooks:
+      - id: shellcheck
+
   - repo: local
     hooks:
       - id: tofu-fmt
@@ -73,6 +78,14 @@ repos:
         language: python
         entry: python scripts/check_module_contracts.py
         files: ^(infra/modules/|scripts/check_module_contracts\.py$)
+        pass_filenames: false
+
+      - id: k8s-validate
+        name: k8s manifests and Helm values (kustomize, helm template, kubeconform)
+        language: python
+        additional_dependencies: [pyyaml==6.0.4]
+        entry: python scripts/validate_k8s.py
+        files: ^(k8s/|scripts/validate_k8s\.py$|\.tool-versions$)
         pass_filenames: false
 
       # Guardrails that encode the project's own rules.
