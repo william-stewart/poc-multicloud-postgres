@@ -1,0 +1,21 @@
+# Where pg-primary archives WAL and base backups: s3://<bucket>/pg-primary/.
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: aws-store
+  namespace: cnpg-db
+spec:
+  # Barman deletes base backups (and the WAL they need) older than this.
+  retentionPolicy: "7d"
+  configuration:
+    destinationPath: s3://${WAL_BUCKET}/
+    s3Credentials:
+      # IRSA: the instances' service account carries the writer role (see
+      # cluster.yaml). EKS's webhook also injects AWS_REGION.
+      inheritFromIAMRole: true
+    wal:
+      compression: gzip
+      maxParallel: 2
+    data:
+      compression: gzip
+      jobs: 2

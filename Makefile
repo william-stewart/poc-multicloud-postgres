@@ -56,6 +56,14 @@ bootstrap: ## Install Cilium (+ CoreDNS on EKS) and Flux on a cluster: CLOUD=aws
 	fi
 	k8s/bootstrap.sh "$(CLOUD)" "$(CONTEXT)" $(if $(DEPLOY_KEY),"$(DEPLOY_KEY)")
 
+.PHONY: data-vars
+data-vars: ## Store infra/30-data outputs for Flux's data layer: CLOUD=aws|gcp CONTEXT=<kube-context>
+	@if [ -z "$(CLOUD)" ] || [ -z "$(CONTEXT)" ]; then \
+	  echo "usage: make data-vars CLOUD=<aws|gcp> CONTEXT=<kube-context>" >&2; \
+	  exit 2; \
+	fi
+	k8s/data-vars.sh "$(CLOUD)" "$(CONTEXT)"
+
 .PHONY: flux-manifests
 flux-manifests: ## Regenerate k8s/flux/gotk-components.yaml with the pinned flux CLI
 	flux install --export > k8s/flux/gotk-components.yaml

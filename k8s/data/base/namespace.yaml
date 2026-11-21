@@ -1,0 +1,6 @@
+# Database clusters live here on both clouds; default-deny network policies
+# for this namespace come with k8s/policies.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cnpg-db
