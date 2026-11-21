@@ -2,8 +2,12 @@
 # keeps replaying WAL from the archive. There is no network path between the
 # clouds; replication lag is bounded by the primary's archive_timeout (60s).
 #
-# Promotion (manual, documented): set replica.enabled to false. Don't let a
-# promoted cluster archive to pg-primary/; give it its own prefix or bucket.
+# It also keeps its own archive in GCS (gcs-store): every WAL segment it
+# replays is archived again there, and it takes its own base backups. The
+# GCP side never depends on S3 to recover, and a promoted replica already has
+# somewhere to archive, under its own name (pg-replica/), never pg-primary/.
+#
+# Promotion (manual, documented): set replica.enabled to false.
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
@@ -26,8 +30,23 @@ spec:
     recovery:
       source: origin
 
-  # The primary, as seen through its archive. No WAL archiver plugin is set on
-  # this cluster, so it never writes to the primary's archive.
+  # WAL archiving and base backups go to GCS. CloudNativePG runs a replica
+  # cluster with archive_mode=always, so this archives the WAL it replays.
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: gcs-store
+
+  # The instances (and the plugin's sidecar) run as the pg-replica service
+  # account, which Workload Identity maps to the writer in infra/30-data/gcp.
+  serviceAccountTemplate:
+    metadata:
+      annotations:
+        iam.gke.io/gcp-service-account: ${GCS_WAL_WRITER_SA}
+
+  # The primary, as seen through its archive, read-only: the reader IAM user
+  # can't write to S3, so this cluster never writes to the primary's archive.
   externalClusters:
     - name: origin
       plugin:
@@ -38,12 +57,23 @@ spec:
 
   storage:
     size: 10Gi
-    # GKE's default class: Persistent Disk (pd-balanced), encrypted at rest.
-    storageClass: standard-rwo
+    # pd-balanced, encrypted at rest, kept when the PVC is deleted
+    # (k8s/platform/gcp/storageclass.yaml).
+    storageClass: pd-balanced-retain
 
+  # WAL on its own volume, sized like the primary's, so a promoted replica
+  # has the same layout and headroom.
+  walStorage:
+    size: 10Gi
+    storageClass: pd-balanced-retain
+
+  # Requests equal limits: Guaranteed QoS, so under node pressure the
+  # database is the last pod evicted or OOM-killed, not the first.
+  # Sized like the primary, so a promoted replica can take its load.
   resources:
     requests:
-      cpu: 250m
-      memory: 512Mi
+      cpu: "1"
+      memory: 2Gi
     limits:
-      memory: 1Gi
+      cpu: "1"
+      memory: 2Gi

@@ -75,7 +75,7 @@ resource "aws_kms_alias" "wal" {
 # trivy:ignore:AVD-AWS-0089
 resource "aws_s3_bucket" "wal" {
   #checkov:skip=CKV_AWS_18:Server access logs need a second bucket; CloudTrail covers API access for this PoC.
-  #checkov:skip=CKV_AWS_144:Cross-region replication is out of scope; the GCP replica is the off-site copy.
+  #checkov:skip=CKV_AWS_144:No S3 replication; pg-replica keeps an independent copy of the backups and WAL in GCS (infra/30-data/gcp).
   #checkov:skip=CKV2_AWS_62:No consumer for event notifications on the WAL bucket.
   bucket = local.bucket_name
 

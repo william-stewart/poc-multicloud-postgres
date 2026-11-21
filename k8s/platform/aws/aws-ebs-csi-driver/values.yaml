@@ -14,7 +14,10 @@ storageClasses:
     # Create each volume in the AZ of the pod that first uses it.
     volumeBindingMode: WaitForFirstConsumer
     allowVolumeExpansion: true
-    reclaimPolicy: Delete
+    # Keep the EBS volume when its PVC (or the Cluster) is deleted, so no
+    # mistake in git or kubectl deletes data. The README's teardown switches
+    # the PVs to Delete first.
+    reclaimPolicy: Retain
     parameters:
       type: gp3
       encrypted: "true"

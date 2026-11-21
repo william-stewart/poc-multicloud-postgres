@@ -1,0 +1,21 @@
+# Rule 9: Workload Identity. The Google client libraries get the writer's
+# short-lived tokens from the GKE metadata server at 169.254.169.254:80 (the
+# node redirects it to gke-metadata-server). Only the HTTP port, nothing else
+# link-local.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-gke-metadata
+  namespace: cnpg-db
+spec:
+  endpointSelector:
+    matchExpressions:
+      - key: cnpg.io/cluster
+        operator: Exists
+  egress:
+    - toCIDR:
+        - 169.254.169.254/32
+      toPorts:
+        - ports:
+            - port: "80"
+              protocol: TCP

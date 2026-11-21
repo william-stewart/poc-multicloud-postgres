@@ -1,6 +1,7 @@
-# Network policies for cnpg-db: default deny plus the flows the databases need.
-# Applied only after the data layer is healthy (dependsOn + wait), so a policy
-# mistake can't be confused with a replication setup problem.
+# The cnpg-db namespace and its network policies: default deny plus the flows
+# the databases need. The data layer depends on this one, so no database pod
+# ever runs without them. Debug a missing rule with
+# `hubble observe -n cnpg-db --verdict DROPPED`, not by suspending the policies.
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata:
@@ -8,7 +9,7 @@ metadata:
   namespace: flux-system
 spec:
   dependsOn:
-    - name: data
+    - name: platform
   interval: 10m
   retryInterval: 2m
   timeout: 10m

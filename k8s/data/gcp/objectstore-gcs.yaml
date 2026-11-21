@@ -1,0 +1,35 @@
+# pg-replica's own archive: gs://<bucket>/pg-replica/, in GCP. As a replica
+# cluster it runs with archive_mode=always, so it re-archives every WAL
+# segment it replays from S3, and its ScheduledBackup takes base backups here.
+# If AWS is lost, this is the copy that remains; once promoted, pg-replica
+# keeps archiving here with no change.
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: gcs-store
+  namespace: cnpg-db
+spec:
+  # Barman deletes base backups (and the WAL they need) older than this.
+  retentionPolicy: "7d"
+  # The plugin's sidecar in each instance pod. Requests equal limits, like the
+  # postgres container's, or the whole pod drops out of Guaranteed QoS.
+  instanceSidecarConfiguration:
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 100m
+        memory: 128Mi
+  configuration:
+    destinationPath: gs://${GCS_WAL_BUCKET}/
+    googleCredentials:
+      # Workload Identity: the instances' service account maps to the writer
+      # in infra/30-data/gcp (see cluster.yaml). No key anywhere.
+      gkeEnvironment: true
+    wal:
+      compression: gzip
+      maxParallel: 2
+    data:
+      compression: gzip
+      jobs: 2

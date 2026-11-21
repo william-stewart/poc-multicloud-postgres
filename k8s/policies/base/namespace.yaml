@@ -1,0 +1,11 @@
+# Database clusters live here on both clouds. The namespace belongs to the
+# policies layer, which Flux applies before the data layer, so the default
+# deny is in place before any database pod starts.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cnpg-db
+  annotations:
+    # Deleting the namespace deletes the Clusters and PVCs in it, whatever
+    # their own annotations say, so Flux must never prune it either.
+    kustomize.toolkit.fluxcd.io/prune: disabled

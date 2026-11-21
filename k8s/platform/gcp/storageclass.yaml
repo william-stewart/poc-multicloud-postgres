@@ -1,0 +1,15 @@
+# Persistent Disk for the database volumes. GKE's own standard-rwo class
+# deletes the disk when its PVC is deleted, and GKE manages that class, so it
+# can't be changed. This one keeps the disk: deleting a PVC (or the Cluster)
+# never deletes data. The README's teardown switches the PVs to Delete first.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: pd-balanced-retain
+provisioner: pd.csi.storage.gke.io
+parameters:
+  type: pd-balanced
+# Create each disk in the zone of the pod that first uses it.
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+reclaimPolicy: Retain

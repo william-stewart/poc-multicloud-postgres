@@ -11,6 +11,9 @@ metadata:
 spec:
   dependsOn:
     - name: platform
+    # Default deny and the allow rules must be in place before any database
+    # pod starts.
+    - name: policies
   interval: 10m
   retryInterval: 2m
   timeout: 20m

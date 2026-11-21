@@ -42,15 +42,27 @@ spec:
     size: 10Gi
     storageClass: gp3
 
+  # WAL on its own volume. If archiving to S3 stalls, WAL piles up here, not
+  # on the data volume: PostgreSQL stops when it's full, but the data volume
+  # stays intact and this one can be expanded online. At archive_timeout 60s
+  # a quiet database writes about 1GiB of WAL an hour, so 10Gi buys roughly
+  # ten hours to notice a stalled archive.
+  walStorage:
+    size: 10Gi
+    storageClass: gp3
+
   # One instance per node, so losing a node never loses both.
   affinity:
     enablePodAntiAffinity: true
     podAntiAffinityType: required
     topologyKey: kubernetes.io/hostname
 
+  # Requests equal limits: Guaranteed QoS, so under node pressure the
+  # database is the last pod evicted or OOM-killed, not the first.
   resources:
     requests:
-      cpu: 250m
-      memory: 512Mi
+      cpu: "1"
+      memory: 2Gi
     limits:
-      memory: 1Gi
+      cpu: "1"
+      memory: 2Gi

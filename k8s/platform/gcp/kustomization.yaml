@@ -1,9 +1,10 @@
-# GKE platform: the shared base. GKE provides DNS (kube-dns) and the
-# Persistent Disk CSI driver itself.
+# GKE platform: the shared base plus a StorageClass that keeps database
+# disks. GKE provides DNS (kube-dns) and the Persistent Disk CSI driver itself.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - ../base
+  - storageclass.yaml
 
 generatorOptions:
   disableNameSuffixHash: true

@@ -1,7 +1,7 @@
 # Database layer: the replica CloudNativePG cluster, following the EKS primary
-# through the S3 archive. It needs the CRDs from the platform layer and the
-# bucket name from infra/30-data/aws, which `make data-vars` stores in the
-# data-vars ConfigMap. Until that ConfigMap exists, Flux reports this
+# through the S3 archive and keeping its own archive in GCS. It needs the CRDs
+# from the platform layer and values from infra/30-data/aws and
+# infra/30-data/gcp, which `make data-vars` stores in the data-vars ConfigMap. Until that ConfigMap exists, Flux reports this
 # Kustomization as not ready and applies nothing.
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
@@ -11,6 +11,9 @@ metadata:
 spec:
   dependsOn:
     - name: platform
+    # Default deny and the allow rules must be in place before any database
+    # pod starts.
+    - name: policies
   interval: 10m
   retryInterval: 2m
   timeout: 20m

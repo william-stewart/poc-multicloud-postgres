@@ -366,10 +366,13 @@ def check_flux_version() -> None:
 
 
 # Objects whose deletion would take down cluster networking (and with it Flux)
-# or delete a database. Flux must never prune them.
+# or delete a database. Flux must never prune them. Deleting a namespace
+# deletes everything in it, so the database and app namespaces are listed too.
 NEVER_PRUNE = {
     ("HelmRelease", "kube-system", "cilium"),
     ("HelmRelease", "kube-system", "coredns"),
+    ("Namespace", None, "cnpg-db"),
+    ("Namespace", None, "app"),
 }
 NEVER_PRUNE_KINDS = {("postgresql.cnpg.io", "Cluster")}
 
@@ -384,7 +387,7 @@ def check_never_pruned(docs: list[dict], where: str) -> None:
             continue
         if (meta.get("annotations") or {}).get("kustomize.toolkit.fluxcd.io/prune") != "disabled":
             raise Failure(
-                f"{where}: {key[0]} {key[1]}/{key[2]} must have the annotation "
+                f"{where}: {key[0]} {'/'.join(k for k in key[1:] if k)} must have the annotation "
                 "kustomize.toolkit.fluxcd.io/prune: disabled, or removing it from git deletes it"
             )
 

@@ -58,6 +58,27 @@ resource "google_kms_crypto_key" "gke_secrets" {
   }
 }
 
+# Key for the GCP WAL archive bucket (infra/30-data/gcp). Long-lived for the
+# same reason as the GKE key; 30-data/gcp grants the Cloud Storage service agent
+# access to it and the grant goes with the bucket.
+resource "google_kms_key_ring" "wal" {
+  name     = "${local.name}-wal"
+  location = local.region
+
+  depends_on = [google_project_service.this]
+}
+
+resource "google_kms_crypto_key" "wal" {
+  name            = "${local.name}-wal"
+  key_ring        = google_kms_key_ring.wal.id
+  purpose         = "ENCRYPT_DECRYPT"
+  rotation_period = "7776000s" # 90 days
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
 # The Cloud Storage service agent encrypts objects with the key on our behalf.
 # No depends_on: it would defer the read to apply time, and the Storage API is
 # enabled by default in every project.
