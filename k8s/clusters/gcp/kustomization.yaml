@@ -1,8 +1,9 @@
 # Flux entry point for the GCP cluster. Flux reconciles this directory
-# from main, so it manages its own install as well as the platform layer.
+# from main, so it manages its own install as well as the platform and data layers.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - ../../flux
   - flux-sync.yaml
   - platform.yaml
+  - data.yaml

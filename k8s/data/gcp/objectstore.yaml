@@ -1,0 +1,24 @@
+# Read-only view of the primary's archive in S3. The reader IAM user can only
+# list and read pg-primary/, only from GCP's Cloud NAT IP, so this store can't
+# be used to write or delete anything.
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: aws-store-ro
+  namespace: cnpg-db
+spec:
+  # No retentionPolicy: the replica must never delete from the primary's archive.
+  configuration:
+    destinationPath: s3://${WAL_BUCKET}/
+    # Created by `make replica-credentials` straight from
+    # `aws iam create-access-key`; never written to disk or git.
+    s3Credentials:
+      accessKeyId:
+        name: aws-s3-reader
+        key: ACCESS_KEY_ID
+      secretAccessKey:
+        name: aws-s3-reader
+        key: ACCESS_SECRET_KEY
+      region:
+        name: aws-s3-reader
+        key: REGION

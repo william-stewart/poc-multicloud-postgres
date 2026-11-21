@@ -20,7 +20,7 @@ run Cilium as the only CNI, with default-deny network policies.
 | `k8s/flux` | Flux | Flux controllers and CRDs, the same on both clusters |
 | `k8s/clusters/{aws,gcp}` | Flux + kustomize | Per-cluster entry point: Git sync and the platform Kustomization |
 | `k8s/platform/{base,aws,gcp}` | Flux `HelmRelease` + kustomize | Cilium, CoreDNS (EKS), cert-manager, CloudNativePG, Barman Cloud plugin, EBS CSI driver (EKS) |
-| `k8s/data/{base,aws}` | Flux + kustomize | The PostgreSQL clusters, their object stores and backups |
+| `k8s/data/{base,aws,gcp}` | Flux + kustomize | The PostgreSQL clusters, their object stores and backups |
 
 OpenTofu manages cloud primitives only. It has no Helm or Kubernetes providers,
 and a pre-commit hook enforces that. Everything inside the clusters is reconciled
@@ -280,6 +280,41 @@ tofu -chdir=infra/30-data/aws plan \
 make data-vars CLOUD=aws CONTEXT=poc-mcpg
 kubectl --context poc-mcpg -n cnpg-db get cluster,backup -w
 ```
+
+## Replica database (GKE)
+
+`pg-replica` in `cnpg-db` on GKE is a CloudNativePG replica cluster with 1 instance
+of the same PostgreSQL 18.7 image. It bootstraps from the primary's latest base
+backup in S3, then keeps replaying WAL from the archive through the Barman Cloud
+plugin. There is no network path between the clouds: the replica only makes
+outbound HTTPS calls to S3 through Cloud NAT, so its lag is bounded by the
+primary's `archive_timeout` (60s).
+
+- **Read-only, from one IP.** The `aws-store-ro` ObjectStore uses the reader IAM user,
+  which can only list and read `pg-primary/`, only from GCP's Cloud NAT IP. It
+  sets no retention policy, and the replica has no WAL archiver, so it never
+  writes to or deletes from the primary's archive.
+- **Credentials never leave the cluster.** `make replica-credentials` creates the
+  reader's access key and stores it, with the bucket region, in the
+  `cnpg-db/aws-s3-reader` Secret. The key goes straight from the AWS API into the
+  Kubernetes API, with no file and no OpenTofu state, and GKE encrypts Secrets
+  with the KMS key from `00-bootstrap/gcp`. Running it again rotates the key: the
+  new key is stored first, then the old one is deleted.
+- **It won't start too early.** `make data-vars CLOUD=gcp` refuses to run until that
+  Secret exists and the primary's first base backup is in S3; until it runs, Flux
+  applies nothing in `k8s/data/gcp`.
+
+```sh
+GKE=$(kubectl config get-contexts -o name | grep '^gke_')
+make replica-credentials CONTEXT="$GKE"
+make data-vars CLOUD=gcp CONTEXT="$GKE"
+kubectl --context "$GKE" -n cnpg-db get cluster pg-replica -w
+```
+
+**Promotion** is a manual step: set `spec.replica.enabled: false` on `pg-replica`
+(in git, so Flux applies it). The promoted cluster then accepts writes. Before it
+archives WAL anywhere, give it its own prefix or bucket and a writer identity; it
+must never archive to `pg-primary/`.
 
 ## Local validation
 
