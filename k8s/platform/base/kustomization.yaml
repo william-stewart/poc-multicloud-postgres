@@ -1,0 +1,36 @@
+# Platform components shared by EKS and GKE. Each overlay (aws/, gcp/) adds its
+# cloud-specific components and the cilium-values-cloud ConfigMap.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespaces.yaml
+  - sources.yaml
+  - cilium/helmrelease.yaml
+  - cert-manager/helmrelease.yaml
+  - cloudnative-pg/helmrelease.yaml
+  - plugin-barman-cloud/helmrelease.yaml
+
+# Helm values live in plain values.yaml files, so they can be read, diffed and
+# reused by bootstrap.sh. Stable names (no hash suffix) let HelmReleases refer
+# to them; the watch label makes helm-controller upgrade when they change.
+generatorOptions:
+  disableNameSuffixHash: true
+  labels:
+    reconcile.fluxcd.io/watch: Enabled
+configMapGenerator:
+  - name: cilium-values-base
+    namespace: kube-system
+    files:
+      - values.yaml=cilium/values.yaml
+  - name: cert-manager-values
+    namespace: cert-manager
+    files:
+      - values.yaml=cert-manager/values.yaml
+  - name: cloudnative-pg-values
+    namespace: cnpg-system
+    files:
+      - values.yaml=cloudnative-pg/values.yaml
+  - name: plugin-barman-cloud-values
+    namespace: cnpg-system
+    files:
+      - values.yaml=plugin-barman-cloud/values.yaml

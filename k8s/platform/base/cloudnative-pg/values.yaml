@@ -1,0 +1,3 @@
+# CloudNativePG operator. The chart installs its CRDs.
+crds:
+  create: true

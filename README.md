@@ -17,10 +17,13 @@ run Cilium as the only CNI, with default-deny network policies.
 | `infra/10-network/{aws,gcp}` | OpenTofu | VPCs, subnets, NAT, S3 gateway endpoint |
 | `infra/20-clusters/{aws,gcp}` | OpenTofu | EKS and GKE without a default CNI |
 | `infra/30-data/aws` | OpenTofu | WAL bucket and IAM |
-| `k8s/` | Helm (helmfile) + kustomize | Everything that runs inside a cluster |
+| `k8s/flux` | Flux | Flux controllers and CRDs, the same on both clusters |
+| `k8s/clusters/{aws,gcp}` | Flux + kustomize | Per-cluster entry point: Git sync and the platform Kustomization |
+| `k8s/platform/{base,aws,gcp}` | Flux `HelmRelease` + kustomize | Cilium, CoreDNS (EKS), cert-manager, CloudNativePG, Barman Cloud plugin, EBS CSI driver (EKS) |
 
 OpenTofu manages cloud primitives only. It has no Helm or Kubernetes providers,
-and a pre-commit hook enforces that.
+and a pre-commit hook enforces that. Everything inside the clusters is reconciled
+from this repo by Flux.
 
 ## Shared settings and module interfaces
 
@@ -185,13 +188,66 @@ EKS needs the **EBS CSI driver** for persistent volumes (CloudNativePG uses gp3)
 It isn't an EKS add-on here, so `k8s/platform` installs it with Helm, using the
 IRSA role from `tofu output ebs_csi_role_arn`.
 
+## Platform (`k8s/`)
+
+Flux reconciles each cluster from `main`: `k8s/clusters/<cloud>` is its entry
+point, and it installs `k8s/platform/<cloud>` as Helm releases.
+
+| Component | EKS | GKE | Notes |
+| --- | --- | --- | --- |
+| Cilium 1.20.5 + Hubble (Relay, UI) | ENI IPAM, kube-proxy replacement, operator on IRSA | GKE IPAM, native routing over the pods range | The only CNI on both |
+| CoreDNS | Helm, as `kube-dns` on the cluster DNS IP | Built in | |
+| cert-manager | yes | yes | TLS for the Barman Cloud plugin |
+| CloudNativePG operator | yes | yes | `cnpg-system` |
+| Barman Cloud plugin | yes | yes | WAL archive and base backups |
+| EBS CSI driver | encrypted gp3 default StorageClass, IRSA | GKE's disk driver | |
+
+Every chart is pinned to an exact version in its `HelmRelease`, and its values are
+a plain `values.yaml` next to it (shared values in `base/`, cloud values in the
+overlay). Account-specific values, such as the EKS API host and IAM role ARNs, are
+not in git. `bootstrap.sh` writes them from `tofu output` into the
+`flux-system/cluster-vars` ConfigMap, and Flux substitutes them into the manifests.
+`cluster-vars.example.env` lists them for each cluster.
+
+The Flux install manifests are committed (`make flux-manifests`), not created by
+`flux bootstrap`, which would push to `main` directly. Controller images are pinned
+by digest.
+
+### Bootstrap order
+
+Nothing can run before the CNI, and on EKS Flux can't resolve `github.com` before
+CoreDNS. `make bootstrap` (which runs `k8s/bootstrap.sh`) therefore:
+
+1. checks that the kube-context points at the cluster the stack built
+2. creates the `cluster-vars` ConfigMap from `tofu output`
+3. installs Cilium (and CoreDNS on EKS) with the Helm CLI, from the same values
+   files and versions Flux uses, and waits for the nodes to become `Ready`
+4. installs Flux with the deploy key and applies `k8s/clusters/<cloud>`
+
+Flux then takes over the Cilium and CoreDNS releases and installs everything else
+in dependency order (`dependsOn`).
+
+Flux reads this private repo with a read-only deploy key. Create it once and keep
+the private half under `secrets/`, which is gitignored:
+
+```sh
+ssh-keygen -t ed25519 -N '' -C flux -f secrets/flux-deploy-key
+gh repo deploy-key add secrets/flux-deploy-key.pub --title flux   # read-only by default
+
+make bootstrap CLOUD=aws CONTEXT=poc-mcpg
+make bootstrap CLOUD=gcp CONTEXT="$(kubectl config get-contexts -o name | grep '^gke_')"
+
+flux --context poc-mcpg get helmreleases -A
+cilium --context poc-mcpg status --wait
+```
+
 ## Local validation
 
 Tool versions are pinned in `.tool-versions`. On macOS:
 
 ```sh
-brew install opentofu trivy gitleaks pre-commit checkov
-brew tap terraform-linters/tap && brew install terraform-linters/tap/tflint
+brew install opentofu trivy gitleaks pre-commit checkov helm kustomize kubeconform shellcheck
+brew install terraform-linters/tap/tflint fluxcd/tap/flux
 make hooks      # installs the pre-commit and commit-msg hooks
 make validate   # every local check; no cloud credentials needed
 ```
@@ -200,10 +256,16 @@ make validate   # every local check; no cloud credentials needed
 
 1. `tofu fmt -check`, then `tofu init -backend=false` and `tofu validate` per stack
 2. `tofu test` with mock providers
-3. `pre-commit run --all-files`: gitleaks, checkov, trivy, tflint, file hygiene,
-   and project guardrails (no `aws_iam_access_key`, no in-cluster providers in OpenTofu,
-   per-cloud modules match their shared interface)
-4. `gitleaks git` over the full history
+3. `pre-commit run --all-files`: gitleaks, checkov, trivy, tflint, shellcheck, file
+   hygiene, and project guardrails (no `aws_iam_access_key`, no in-cluster providers in
+   OpenTofu, per-cloud modules match their shared interface)
+4. Kubernetes layer (`scripts/validate_k8s.py`, part of pre-commit): kustomize builds
+   of every cluster and overlay, validated with kubeconform against Kubernetes 1.36
+   and the Flux CRD schemas; `helm template` of every `HelmRelease` at its pinned
+   version with its merged values; every values key checked against the chart's
+   schema; `${VARS}` checked against `cluster-vars.example.env`; and the versions
+   in `bootstrap.sh` and the Flux image digests checked against what Flux manages
+5. `gitleaks git` over the full history
 
 Commit messages are checked against Conventional Commits by a `commit-msg` hook.
 

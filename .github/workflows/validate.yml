@@ -70,6 +70,32 @@ jobs:
           tar -xzf "$RUNNER_TEMP/$tarball" -C "$RUNNER_TEMP" gitleaks
           sudo install -m 0755 "$RUNNER_TEMP/gitleaks" /usr/local/bin/gitleaks
 
+      - uses: azure/setup-helm@2f5e7bc67f1f9972ab16657bb795f36d8f04de0e # v5.1.0
+        with:
+          version: v${{ steps.versions.outputs.helm }}
+          checksum-policy: required
+
+      - name: Install kustomize and kubeconform (checksum verified)
+        env:
+          KUSTOMIZE_VERSION: ${{ steps.versions.outputs.kustomize }}
+          KUBECONFORM_VERSION: ${{ steps.versions.outputs.kubeconform }}
+          # Bump together with .tool-versions; from each release's checksums file.
+          KUSTOMIZE_SHA256: cb9e31198d3f63b44848bd0afc4c8efc56e6cfef9c93a4a39a211940e6decd61
+          KUBECONFORM_SHA256: 9bc2bffbf71f261128533edaf912153948b7ff238f9a531ae6d34466ec287883
+        run: |
+          kustomize_tar="kustomize_v${KUSTOMIZE_VERSION}_linux_amd64.tar.gz"
+          curl -fsSLo "$RUNNER_TEMP/$kustomize_tar" \
+            "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv${KUSTOMIZE_VERSION}/${kustomize_tar}"
+          echo "${KUSTOMIZE_SHA256}  $RUNNER_TEMP/$kustomize_tar" | sha256sum --check --strict
+          tar -xzf "$RUNNER_TEMP/$kustomize_tar" -C "$RUNNER_TEMP" kustomize
+
+          curl -fsSLo "$RUNNER_TEMP/kubeconform.tar.gz" \
+            "https://github.com/yannh/kubeconform/releases/download/v${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz"
+          echo "${KUBECONFORM_SHA256}  $RUNNER_TEMP/kubeconform.tar.gz" | sha256sum --check --strict
+          tar -xzf "$RUNNER_TEMP/kubeconform.tar.gz" -C "$RUNNER_TEMP" kubeconform
+
+          sudo install -m 0755 "$RUNNER_TEMP/kustomize" "$RUNNER_TEMP/kubeconform" /usr/local/bin/
+
       - name: Install pre-commit
         env:
           PRE_COMMIT_VERSION: ${{ steps.versions.outputs.pre-commit }}
@@ -80,6 +106,12 @@ jobs:
         with:
           path: ~/.cache/pre-commit
           key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
+
+      - name: Cache Helm charts used by k8s validation
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/poc-multicloud-postgres/charts
+          key: charts-${{ hashFiles('k8s/**/helmrelease.yaml') }}
 
       - name: Cache OpenTofu providers and tflint plugins
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

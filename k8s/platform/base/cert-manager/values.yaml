@@ -1,0 +1,6 @@
+# The Barman Cloud plugin uses cert-manager for TLS between the CloudNativePG
+# operator and the plugin.
+crds:
+  enabled: true
+  # Keep CRDs (and so all Certificates) if the release is ever uninstalled.
+  keep: true

@@ -1,0 +1,51 @@
+# Flux controllers and CRDs, the same on both clusters.
+# gotk-components.yaml is generated, not hand-edited (make flux-manifests).
+# Its version must match the flux CLI in .tool-versions (make validate checks).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - gotk-components.yaml
+
+# Pin each controller image by digest, since tags can be moved. newTag must
+# match the tag in gotk-components.yaml (make validate checks), so a Flux
+# upgrade can't silently keep running the old images. To update, resolve each
+# new tag's digest from ghcr.io.
+images:
+  - name: ghcr.io/fluxcd/helm-controller
+    newTag: v1.7.2
+    digest: sha256:cc944eff709767f9a4d22de6b52dfa330f872962465868ed7787320b056b84f8
+  - name: ghcr.io/fluxcd/kustomize-controller
+    newTag: v1.10.2
+    digest: sha256:e122808057ef0f6a3cb7fbd8e256b5a528d8a59f41d237f2d6664f54481c26d9
+  - name: ghcr.io/fluxcd/notification-controller
+    newTag: v1.10.1
+    digest: sha256:229b0685768aec0adf7f0d9536890c93bcffc06b17336e1c1fdd4372c4c27dca
+  - name: ghcr.io/fluxcd/source-controller
+    newTag: v1.10.2
+    digest: sha256:1405a9e460833df9aff920664243c0df271f42be05e0bf38db31d2b7e9ebbaab
+
+# Accepted checkov findings on Flux's own manifests, recorded where they apply.
+# Strategic-merge patches add these annotations without replacing any that
+# upstream sets. With a target, the name in each patch is ignored.
+patches:
+  - target:
+      kind: Deployment
+      namespace: flux-system
+    patch: |
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: all-flux-controllers
+        annotations:
+          checkov.io/skip1: CKV_K8S_15=Images are pinned by digest, so pulling on every start adds nothing.
+          checkov.io/skip2: CKV_K8S_38=The controllers manage cluster resources and need their service account tokens.
+          checkov.io/skip3: CKV_K8S_40=Flux runs as non-root with a read-only root filesystem; the UID is set by the upstream image.
+  - target:
+      kind: ClusterRole
+    patch: |
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRole
+      metadata:
+        name: all-flux-cluster-roles
+        annotations:
+          checkov.io/skip1: CKV_K8S_49=Flux's upstream roles; the reconcilers must manage arbitrary resource types.

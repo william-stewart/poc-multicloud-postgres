@@ -14,6 +14,9 @@ skip-path:
   - \.terraform
   - \.claude
   - secrets
+  # Generated upstream Flux manifests: scanned through k8s/flux/kustomization.yaml,
+  # which pins their images by digest and records the accepted findings.
+  - k8s/flux/gotk-components\.yaml
 download-external-modules: true
 compact: true
 quiet: true

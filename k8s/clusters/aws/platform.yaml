@@ -1,0 +1,24 @@
+# In-cluster platform: Cilium, cert-manager, CloudNativePG and its Barman
+# Cloud plugin, plus CoreDNS and the EBS CSI driver on EKS.
+# Account-specific values (role ARNs, the API host) are not in git: Flux
+# substitutes ${VARS} from the cluster-vars ConfigMap, which bootstrap.sh
+# creates from `tofu output`. See cluster-vars.example.env for the list.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: platform
+  namespace: flux-system
+spec:
+  interval: 10m
+  retryInterval: 2m
+  timeout: 20m
+  path: ./k8s/platform/aws
+  prune: true
+  wait: true
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  postBuild:
+    substituteFrom:
+      - kind: ConfigMap
+        name: cluster-vars

@@ -1,0 +1,15 @@
+# EKS has no CoreDNS add-on here, so it comes from Helm (after Cilium).
+replicaCount: 2
+
+# Keep the conventional name and label: kubelet, clients and network policies
+# (k8s-app: kube-dns) all expect them.
+k8sAppLabelOverride: kube-dns
+service:
+  name: kube-dns
+  # Must be the cluster DNS IP that kubelet hands to pods (10th address of the
+  # service CIDR). bootstrap.sh reads it from the cluster.
+  clusterIP: ${EKS_DNS_SERVICE_IP}
+
+priorityClassName: system-cluster-critical
+podDisruptionBudget:
+  maxUnavailable: 1

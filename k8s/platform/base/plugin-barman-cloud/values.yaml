@@ -1,0 +1,4 @@
+# Barman Cloud plugin for CloudNativePG: WAL archiving and base backups to
+# object storage. It must run in the operator's namespace (cnpg-system).
+# Chart defaults are used.
+{}

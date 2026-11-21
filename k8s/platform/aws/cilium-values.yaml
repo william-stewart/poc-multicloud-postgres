@@ -1,0 +1,16 @@
+# EKS: Cilium replaces both the AWS VPC CNI and kube-proxy (neither is installed).
+
+# ENI mode: the operator attaches ENIs and assigns pod IPs from the VPC subnets.
+eni:
+  enabled: true
+  # IRSA role with only the ENI permissions Cilium needs (infra/modules/cluster/aws).
+  # The chart puts this on the cilium-operator service account.
+  iamRole: ${CILIUM_OPERATOR_ROLE_ARN}
+ipam:
+  mode: eni
+
+# No kube-proxy on EKS, so Cilium must reach the API server directly rather than
+# through the kubernetes Service IP.
+kubeProxyReplacement: "true"
+k8sServiceHost: ${EKS_API_HOST}
+k8sServicePort: 443
