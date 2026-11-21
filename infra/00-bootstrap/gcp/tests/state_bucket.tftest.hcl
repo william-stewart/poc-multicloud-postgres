@@ -52,6 +52,15 @@ run "gke_secrets_key_is_long_lived" {
   }
 }
 
+run "wal_key_is_long_lived" {
+  command = plan
+
+  assert {
+    condition     = google_kms_crypto_key.wal.rotation_period == "7776000s" && google_kms_key_ring.wal.location == "us-central1"
+    error_message = "The WAL archive key must rotate every 90 days and sit in the bucket's region."
+  }
+}
+
 # These resources hold the state of every GCP stack and the GKE Secrets key;
 # Cloud KMS names can never be reused. Their names must never change.
 run "names_are_stable" {
@@ -65,6 +74,8 @@ run "names_are_stable" {
       google_kms_crypto_key.state.name == "poc-mcpg-tfstate" &&
       google_kms_key_ring.gke.name == "poc-mcpg-gke" &&
       google_kms_crypto_key.gke_secrets.name == "poc-mcpg-gke-secrets" &&
+      google_kms_key_ring.wal.name == "poc-mcpg-wal" &&
+      google_kms_crypto_key.wal.name == "poc-mcpg-wal" &&
       google_kms_key_ring.state.location == "us-central1"
     )
     error_message = "A state bucket or KMS name or location changed; that would replace live resources."

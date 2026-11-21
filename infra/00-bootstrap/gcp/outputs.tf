@@ -13,6 +13,11 @@ output "gke_secrets_kms_key_id" {
   value       = google_kms_crypto_key.gke_secrets.id
 }
 
+output "wal_kms_key_id" {
+  description = "Cloud KMS key that 30-data/gcp uses to encrypt the GCP WAL archive bucket."
+  value       = google_kms_crypto_key.wal.id
+}
+
 output "backend_config" {
   description = "Values for `tofu init -backend-config=...` in the GCP stacks (add a per-stack prefix)."
   value = {
