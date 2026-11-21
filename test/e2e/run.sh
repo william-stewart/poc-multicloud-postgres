@@ -137,10 +137,19 @@ dump_diagnostics() {
   kc -n "$NS" get cluster -o yaml >"$diagnostics/clusters.yaml" 2>&1 || true
   kc -n "$NS" get events --sort-by=.lastTimestamp >"$diagnostics/events.txt" 2>&1 || true
   kc -n cnpg-system logs deploy/cloudnative-pg --tail=500 >"$diagnostics/operator.log" 2>&1 || true
-  kc -n cnpg-system logs deploy/barman-cloud --tail=500 >"$diagnostics/plugin.log" 2>&1 || true
-  local pod
+  kc -n cnpg-system logs deploy/plugin-barman-cloud --tail=500 >"$diagnostics/plugin.log" 2>&1 || true
+  local pod container
   for pod in $(kc -n "$NS" get pods -o name 2>/dev/null); do
     kc -n "$NS" logs "$pod" --all-containers --tail=300 >"$diagnostics/${pod#pod/}.log" 2>&1 || true
+    # Why each container last stopped (OOMKilled, Error, exit code), which
+    # neither the events nor the current logs show.
+    kc -n "$NS" get "$pod" -o jsonpath='{range .status.containerStatuses[*]}{.name}{" restarts="}{.restartCount}{" last="}{.lastState.terminated.reason}{" exit="}{.lastState.terminated.exitCode}{"\n"}{end}' 2>&1 |
+      sed "s|^|${pod#pod/} |" >>"$diagnostics/container-status.txt" || true
+    # Logs of a container's previous run, lost from the line above once it restarts.
+    for container in $(kc -n "$NS" get "$pod" -o jsonpath='{range .status.containerStatuses[?(@.restartCount>0)]}{.name}{" "}{end}' 2>/dev/null); do
+      kc -n "$NS" logs "$pod" -c "$container" --previous --tail=300 \
+        >"$diagnostics/${pod#pod/}.$container.previous.log" 2>&1 || true
+    done
   done
   echo "Diagnostics: $diagnostics"
 }
