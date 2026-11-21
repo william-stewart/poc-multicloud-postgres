@@ -234,12 +234,20 @@ install_monitoring() {
     exit 1
   fi
   log "Prometheus and Grafana (kube-prometheus-stack $version)"
-  hc upgrade --install kube-prometheus-stack kube-prometheus-stack \
+  # The dashboard only watches the test, so a monitoring stack that doesn't
+  # come up is a warning, not a failed run.
+  if ! hc upgrade --install kube-prometheus-stack kube-prometheus-stack \
     --repo https://prometheus-community.github.io/helm-charts \
     --version "$version" --namespace monitoring --create-namespace \
-    -f "$values" --wait --timeout 10m
-  kc apply -k k8s/monitoring/config >/dev/null
-  echo "Dashboard: run make e2e-grafana in another terminal, then open http://localhost:3000"
+    -f "$values" --wait --timeout 5m; then
+    echo "warning: Prometheus or Grafana isn't ready; continuing without waiting for them" >&2
+    kc -n monitoring get pods >&2 || true
+  fi
+  if kc apply -k k8s/monitoring/config >/dev/null; then
+    echo "Dashboard: run make e2e-grafana in another terminal, then open http://localhost:3000/d/postgres-dr"
+  else
+    echo "warning: couldn't apply k8s/monitoring/config; the dashboard will be empty" >&2
+  fi
 }
 
 deploy_object_store() {
