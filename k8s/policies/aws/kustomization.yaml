@@ -1,0 +1,10 @@
+# EKS: the shared rules plus IRSA's STS calls, streaming between the two
+# primary instances, and application access to the primary.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../base
+  - app-namespace.yaml
+  - allow-sts.yaml
+  - allow-pg-primary-instances.yaml
+  - allow-app-to-primary.yaml

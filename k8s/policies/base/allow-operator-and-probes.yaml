@@ -1,0 +1,29 @@
+# Rule 3: the CloudNativePG operator (cnpg-system) checks each instance's
+# status on 8000 and manages PostgreSQL on 5432. The kubelet's liveness,
+# readiness and startup probes also hit 8000, from the node itself.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-operator-and-probes
+  namespace: cnpg-db
+spec:
+  endpointSelector:
+    matchLabels:
+      cnpg.io/podRole: instance
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: cnpg-system
+            app.kubernetes.io/name: cloudnative-pg
+      toPorts:
+        - ports:
+            - port: "8000"
+              protocol: TCP
+            - port: "5432"
+              protocol: TCP
+    - fromEntities:
+        - host
+      toPorts:
+        - ports:
+            - port: "8000"
+              protocol: TCP

@@ -1,0 +1,24 @@
+# Rule 1: name lookups through kube-dns (CoreDNS on EKS, kube-dns on GKE; both
+# carry k8s-app: kube-dns). The DNS rule sends lookups through Cilium's DNS
+# proxy, which is what lets the toFQDNs rules (S3, STS) learn their IPs.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: cnpg-db
+spec:
+  endpointSelector: {}
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"

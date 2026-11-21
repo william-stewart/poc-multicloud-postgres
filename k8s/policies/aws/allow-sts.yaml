@@ -1,0 +1,21 @@
+# Rule 6: IRSA exchanges the service account token for AWS credentials at STS.
+# EKS injects AWS_STS_REGIONAL_ENDPOINTS=regional; the global endpoint is kept
+# for SDKs that ignore it. EKS and the WAL bucket share one region (settings).
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-sts
+  namespace: cnpg-db
+spec:
+  endpointSelector:
+    matchExpressions:
+      - key: cnpg.io/cluster
+        operator: Exists
+  egress:
+    - toFQDNs:
+        - matchName: sts.${WAL_BUCKET_REGION}.amazonaws.com
+        - matchName: sts.amazonaws.com
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP

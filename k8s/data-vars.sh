@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Store the outputs of infra/30-data/<cloud> in the flux-system/data-vars
-# ConfigMap, which the data Kustomization substitutes from. Until it exists,
-# Flux applies nothing in k8s/data/<cloud>, so the database never starts with
-# an empty bucket name or role.
+# Store the outputs of infra/30-data/aws in the flux-system/data-vars
+# ConfigMap, which the data and policies Kustomizations substitute from. Until
+# it exists, Flux applies neither, so the database never starts with an empty
+# bucket name or role.
 #
 # Usage, after `tofu apply` in infra/30-data/aws and `make bootstrap`:
 #   k8s/data-vars.sh <aws|gcp> <kube-context>
@@ -37,6 +37,7 @@ case $cloud in
     {
       echo "WAL_BUCKET=$(tofu -chdir=infra/30-data/aws output -raw wal_bucket)"
       echo "WAL_WRITER_ROLE_ARN=$(tofu -chdir=infra/30-data/aws output -raw wal_writer_role_arn)"
+      echo "WAL_BUCKET_REGION=$(tofu -chdir=infra/30-data/aws output -raw wal_bucket_region)"
     } >"$vars"
     ;;
   gcp)
@@ -52,7 +53,10 @@ case $cloud in
       echo "no base backup under s3://$bucket/pg-primary/base/ yet; wait for the primary's first backup" >&2
       exit 1
     fi
-    echo "WAL_BUCKET=$bucket" >"$vars"
+    {
+      echo "WAL_BUCKET=$bucket"
+      echo "WAL_BUCKET_REGION=$(tofu -chdir=infra/30-data/aws output -raw wal_bucket_region)"
+    } >"$vars"
     ;;
 esac
 
