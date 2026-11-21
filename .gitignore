@@ -35,3 +35,13 @@ id_ed25519*
 # Tool output and OS noise
 .DS_Store
 .tflint.d/
+
+# Backend settings saved locally (account-specific)
+*.backend.hcl
+backend.hcl
+
+# Checkov downloads external modules here
+.external_modules/
+
+# Reusable modules: the calling stack's lock file is the one that applies
+infra/modules/**/.terraform.lock.hcl
