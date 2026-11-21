@@ -14,7 +14,7 @@ For each cloud:
      charts' schemas list every key but still accept unknown ones, so a typo
      or a key removed in a new chart version would otherwise be ignored.
   4. Turn every CRD that Flux, the pinned charts and the pinned Cilium release
-     (CiliumNetworkPolicy) install into a strict JSON
+     (CiliumNetworkPolicy, fetched by commit) install into a strict JSON
      schema (unknown fields rejected), and validate all of the above with
      kubeconform against those schemas, Kubernetes 1.36, and a pinned CRD
      catalog as a fallback.
@@ -152,18 +152,33 @@ def collect_crd_schemas(docs: list[dict], schema_dir: Path) -> None:
             path.write_text(json.dumps(schema))
 
 
+# The commit each Cilium release tag points to. Tags can be moved, so the CRDs
+# are fetched by commit. To upgrade Cilium, add the new tag's commit:
+#   git ls-remote https://github.com/cilium/cilium 'refs/tags/v<version>^{}'
+CILIUM_COMMITS = {
+    "1.20.5": "150121410c147fad575ac5dcbce6de923be69042",
+}
+
+
 def cilium_crds(version: str) -> list[dict]:
     """CiliumNetworkPolicy CRDs as the pinned Cilium release installs them.
 
     The Cilium operator creates its CRDs at runtime from copies embedded in
-    the release, so they aren't in the chart; fetch them from the same tag.
+    the release, so they aren't in the chart; fetch them from the release's
+    commit.
     """
+    commit = CILIUM_COMMITS.get(version)
+    if commit is None:
+        raise Failure(
+            f"Cilium {version} has no pinned commit in CILIUM_COMMITS (scripts/validate_k8s.py); add the commit "
+            f"from: git ls-remote https://github.com/cilium/cilium 'refs/tags/v{version}^{{}}'"
+        )
     docs = []
     for name in ("ciliumnetworkpolicies", "ciliumclusterwidenetworkpolicies"):
-        cached = CACHE / f"cilium-{version}-{name}.yaml"
+        cached = CACHE / f"cilium-{commit}-{name}.yaml"
         if not cached.exists():
             CACHE.mkdir(parents=True, exist_ok=True)
-            url = f"https://raw.githubusercontent.com/cilium/cilium/v{version}/pkg/k8s/apis/cilium.io/client/crds/v2/{name}.yaml"
+            url = f"https://raw.githubusercontent.com/cilium/cilium/{commit}/pkg/k8s/apis/cilium.io/client/crds/v2/{name}.yaml"
             run(["curl", "-fsSL", "-o", str(cached), url])
         docs += load_docs(cached.read_text())
     return docs
