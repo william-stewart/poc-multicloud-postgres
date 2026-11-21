@@ -56,6 +56,9 @@ module "eks" {
   enable_cluster_creator_admin_permissions = true
 
   enable_irsa = true
+  # IAM validates EKS's OIDC issuer against its own trusted CAs and ignores
+  # thumbprints, so skip fetching the issuer's certificate during apply.
+  include_oidc_root_ca_thumbprint = false
 
   # Envelope-encrypt Kubernetes Secrets with a module-created KMS key.
   create_kms_key                  = true

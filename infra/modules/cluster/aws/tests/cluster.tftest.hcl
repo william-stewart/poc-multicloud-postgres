@@ -54,11 +54,9 @@ mock_provider "aws" {
   }
 }
 
-mock_provider "tls" {
-  mock_data "tls_certificate" {
-    defaults = { certificates = [{ sha1_fingerprint = "0000000000000000000000000000000000000000" }] }
-  }
-}
+# The EKS module requires tls but, with include_oidc_root_ca_thumbprint off,
+# never reads from it.
+mock_provider "tls" {}
 
 variables {
   name               = "test"
