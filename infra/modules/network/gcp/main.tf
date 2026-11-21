@@ -10,6 +10,9 @@ resource "google_compute_network" "this" {
 
 # GCP already denies ingress implicitly; this makes the rule explicit and
 # logged. GKE's own allow rules use priority 1000 and take precedence.
+# AVD-GCP-0074 (large port range) is meant for allow rules; on a deny rule,
+# covering every port is the point.
+# trivy:ignore:AVD-GCP-0074
 resource "google_compute_firewall" "deny_all_ingress" {
   project   = var.project_id
   name      = "${var.name}-deny-all-ingress"
