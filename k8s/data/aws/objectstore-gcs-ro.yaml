@@ -1,0 +1,31 @@
+# Read-only view of pg-replica's archive in GCS: pg-primary follows it after
+# a switchover to GCP, and is rebuilt from it after a failover. Workload
+# Identity Federation: Google's STS exchanges pg-primary's EKS service account
+# token for a short-lived token that can only read the bucket
+# (infra/30-data/gcp). The gcs-reader Secret holds the credential
+# configuration, which names the token file and the provider, not a key;
+# `make data-vars` creates it.
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: gcs-store-ro
+  namespace: cnpg-db
+spec:
+  # No retentionPolicy: pg-primary must never delete from pg-replica's archive
+  # (and can't: the grant is read-only).
+  # The plugin's sidecar in each instance pod. Requests equal limits, like the
+  # postgres container's, or the whole pod drops out of Guaranteed QoS.
+  instanceSidecarConfiguration:
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 100m
+        memory: 128Mi
+  configuration:
+    destinationPath: gs://${GCS_WAL_BUCKET}/
+    googleCredentials:
+      applicationCredentials:
+        name: gcs-reader
+        key: credentials.json

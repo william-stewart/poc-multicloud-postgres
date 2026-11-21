@@ -48,13 +48,18 @@ mock_provider "aws" {
     defaults = { arn = "arn:aws:kms:us-east-1:123456789012:key/00000000-0000-0000-0000-000000000000" }
   }
 
+  mock_resource "aws_iam_openid_connect_provider" {
+    defaults = { arn = "arn:aws:iam::123456789012:oidc-provider/container.googleapis.com/v1/projects/poc-test-project/locations/us-central1-a/clusters/poc-mcpg" }
+  }
+
   mock_resource "aws_iam_role" {
     defaults = { arn = "arn:aws:iam::123456789012:role/poc-mcpg-wal-writer" }
   }
 }
 
 variables {
-  replica_egress_ips = ["203.0.113.20"]
+  replica_egress_ips  = ["203.0.113.20"]
+  gke_oidc_issuer_url = "https://container.googleapis.com/v1/projects/poc-test-project/locations/us-central1-a/clusters/poc-mcpg"
 }
 
 run "bucket_is_private_and_encrypted" {
@@ -117,6 +122,25 @@ run "writer_is_only_the_primary_cluster" {
   }
 }
 
+run "reader_is_only_the_replica_cluster_without_a_key" {
+  command = plan
+
+  assert {
+    condition     = one([for c in data.aws_iam_policy_document.reader_trust.statement[0].condition : c.values if c.variable == "container.googleapis.com/v1/projects/poc-test-project/locations/us-central1-a/clusters/poc-mcpg:sub"]) == tolist(["system:serviceaccount:cnpg-db:pg-replica"])
+    error_message = "Only the pg-replica service account on the GKE cluster may assume the reader role."
+  }
+
+  assert {
+    condition     = one([for c in data.aws_iam_policy_document.reader_trust.statement[0].condition : c.values if endswith(c.variable, ":aud")]) == tolist(["sts.amazonaws.com"])
+    error_message = "The reader role must only accept tokens minted for AWS STS."
+  }
+
+  assert {
+    condition     = aws_iam_openid_connect_provider.gke.url == "https://container.googleapis.com/v1/projects/poc-test-project/locations/us-central1-a/clusters/poc-mcpg"
+    error_message = "The OIDC provider must trust exactly the GKE cluster's issuer."
+  }
+}
+
 run "reader_is_read_only_from_the_gcp_nat" {
   command = plan
 
@@ -155,6 +179,16 @@ run "rejects_cidr_ranges_for_the_replica" {
   }
 
   expect_failures = [var.replica_egress_ips]
+}
+
+run "rejects_a_non_gke_issuer" {
+  command = plan
+
+  variables {
+    gke_oidc_issuer_url = "https://token.actions.githubusercontent.com"
+  }
+
+  expect_failures = [var.gke_oidc_issuer_url]
 }
 
 run "rejects_empty_replica_ip_list" {

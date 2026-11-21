@@ -8,7 +8,8 @@ locals {
 }
 
 resource "google_project_service" "this" {
-  for_each = toset(["cloudkms.googleapis.com", "storage.googleapis.com"])
+  # iam and sts: Workload Identity Federation for EKS (below).
+  for_each = toset(["cloudkms.googleapis.com", "storage.googleapis.com", "iam.googleapis.com", "sts.googleapis.com"])
 
   service = each.value
 
@@ -77,6 +78,22 @@ resource "google_kms_crypto_key" "wal" {
   lifecycle {
     prevent_destroy = true
   }
+}
+
+# Lets workloads on EKS act in GCP without a key: 30-data/gcp adds a provider
+# that trusts the EKS cluster's OIDC issuer. The pool lives here because a
+# deleted pool's ID can't be reused for 30 days, which a nightly teardown
+# would hit.
+resource "google_iam_workload_identity_pool" "eks" {
+  workload_identity_pool_id = "${local.name}-eks"
+  display_name              = "EKS workloads"
+  description               = "Kubernetes service accounts on the ${local.name} EKS cluster"
+
+  lifecycle {
+    prevent_destroy = true
+  }
+
+  depends_on = [google_project_service.this]
 }
 
 # The Cloud Storage service agent encrypts objects with the key on our behalf.

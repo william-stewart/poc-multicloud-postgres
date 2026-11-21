@@ -5,6 +5,11 @@ mock_provider "google" {
   }
 
   override_data {
+    target = data.google_project.this
+    values = { number = "123456789012" }
+  }
+
+  override_data {
     target = data.google_kms_crypto_key.wal
     values = { id = "projects/poc-test-project/locations/us-central1/keyRings/poc-mcpg-wal/cryptoKeys/poc-mcpg-wal" }
   }
@@ -19,7 +24,8 @@ mock_provider "google" {
 }
 
 variables {
-  project_id = "poc-test-project"
+  project_id          = "poc-test-project"
+  eks_oidc_issuer_url = "https://oidc.eks.us-east-1.amazonaws.com/id/0123456789ABCDEF0123456789ABCDEF"
 }
 
 run "bucket_is_private_and_encrypted" {
@@ -73,6 +79,53 @@ run "writer_is_only_the_replica_cluster" {
     condition     = alltrue([for m in google_storage_bucket_iam_member.writer : m.bucket == "poc-test-project-poc-mcpg-wal"])
     error_message = "The writer's grants must be on the WAL bucket only."
   }
+}
+
+run "eks_reader_is_only_pg_primary_and_read_only" {
+  command = plan
+
+  assert {
+    condition     = google_iam_workload_identity_pool_provider.eks.attribute_condition == "assertion.sub == 'system:serviceaccount:cnpg-db:pg-primary'"
+    error_message = "The EKS provider must accept only pg-primary's service account."
+  }
+
+  assert {
+    condition     = google_iam_workload_identity_pool_provider.eks.oidc[0].issuer_uri == "https://oidc.eks.us-east-1.amazonaws.com/id/0123456789ABCDEF0123456789ABCDEF"
+    error_message = "The EKS provider must trust exactly the cluster's issuer."
+  }
+
+  assert {
+    condition     = google_iam_workload_identity_pool_provider.eks.workload_identity_pool_provider_id == "eks-0123456789abcdef0123456789ab" && google_iam_workload_identity_pool_provider.eks.workload_identity_pool_id == "poc-mcpg-eks"
+    error_message = "The provider must be named after the issuer, in the pool from 00-bootstrap/gcp."
+  }
+
+  assert {
+    condition     = toset([for m in google_storage_bucket_iam_member.eks_reader : m.role]) == toset(["roles/storage.objectViewer", "roles/storage.legacyBucketReader"])
+    error_message = "pg-primary may only read the GCS archive."
+  }
+
+  assert {
+    condition = alltrue([
+      for m in google_storage_bucket_iam_member.eks_reader :
+      m.member == "principal://iam.googleapis.com/projects/123456789012/locations/global/workloadIdentityPools/poc-mcpg-eks/subject/system:serviceaccount:cnpg-db:pg-primary"
+    ])
+    error_message = "The read grant must name pg-primary's federated identity only."
+  }
+
+  assert {
+    condition     = jsondecode(output.eks_reader_credential_config).audience == "//iam.googleapis.com/projects/123456789012/locations/global/workloadIdentityPools/poc-mcpg-eks/providers/eks-0123456789abcdef0123456789ab"
+    error_message = "The credential configuration must point at the EKS provider."
+  }
+}
+
+run "rejects_a_non_eks_issuer" {
+  command = plan
+
+  variables {
+    eks_oidc_issuer_url = "https://accounts.google.com"
+  }
+
+  expect_failures = [var.eks_oidc_issuer_url]
 }
 
 run "rejects_invalid_project_id" {

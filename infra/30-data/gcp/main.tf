@@ -9,6 +9,20 @@ locals {
   # The Kubernetes service account CloudNativePG runs pg-replica's instances
   # (and the Barman Cloud sidecar) under, as a Workload Identity member.
   replica_ksa = "serviceAccount:${var.project_id}.svc.id.goog[${var.database_namespace}/${var.replica_cluster_name}]"
+
+  # Workload Identity Federation for pg-primary on EKS. The pool is long-lived
+  # (00-bootstrap/gcp); the provider is per EKS cluster. Every EKS cluster
+  # gets a new issuer ID, so naming the provider after it means a rebuilt
+  # cluster never collides with a provider deleted less than 30 days ago.
+  eks_pool_id     = "${local.name}-eks"
+  eks_issuer_id   = lower(regex("[0-9A-F]{32}$", var.eks_oidc_issuer_url))
+  eks_provider_id = "eks-${substr(local.eks_issuer_id, 0, 28)}"
+  eks_pool_name   = "projects/${data.google_project.this.number}/locations/global/workloadIdentityPools/${local.eks_pool_id}"
+  primary_subject = "system:serviceaccount:${var.database_namespace}:${var.primary_cluster_name}"
+}
+
+data "google_project" "this" {
+  project_id = var.project_id
 }
 
 # --- Other stacks, found through data sources (no remote state) ---
@@ -109,4 +123,42 @@ resource "google_storage_bucket_iam_member" "writer" {
   bucket = google_storage_bucket.wal.name
   role   = each.value
   member = google_service_account.writer.member
+}
+
+# --- Reader: pg-primary on EKS, through Workload Identity Federation ---
+# The CloudNativePG distributed topology needs each cluster to read the
+# other's archive: pg-primary reads this bucket to follow pg-replica after a
+# switchover, and to be rebuilt from it after a failover. No key: Google's STS
+# exchanges the pod's EKS service account token for a short-lived token.
+
+resource "google_iam_workload_identity_pool_provider" "eks" {
+  workload_identity_pool_id          = local.eks_pool_id
+  workload_identity_pool_provider_id = local.eks_provider_id
+  display_name                       = "EKS ${local.eks_issuer_id}"
+  description                        = "Service account tokens of the ${local.name} EKS cluster"
+
+  # Only pg-primary's service account; any other token from the cluster is
+  # rejected at the exchange.
+  attribute_mapping   = { "google.subject" = "assertion.sub" }
+  attribute_condition = "assertion.sub == '${local.primary_subject}'"
+
+  oidc {
+    issuer_uri = var.eks_oidc_issuer_url
+    # The token EKS already mounts for IRSA, so the pod needs no second one.
+    # It only works for pg-primary's subject, which the IRSA writer role
+    # trusts too, so accepting it grants nothing to anyone else.
+    allowed_audiences = ["sts.amazonaws.com"]
+  }
+}
+
+# Read-only, on this bucket only. objectViewer lists and reads objects;
+# legacyBucketReader adds storage.buckets.get for Barman's bucket check.
+resource "google_storage_bucket_iam_member" "eks_reader" {
+  for_each = toset(["roles/storage.objectViewer", "roles/storage.legacyBucketReader"])
+
+  bucket = google_storage_bucket.wal.name
+  role   = each.value
+  member = "principal://iam.googleapis.com/${local.eks_pool_name}/subject/${local.primary_subject}"
+
+  depends_on = [google_iam_workload_identity_pool_provider.eks]
 }

@@ -17,6 +17,9 @@ locals {
 
   oidc_issuer   = data.aws_eks_cluster.this.identity[0].oidc[0].issuer
   oidc_provider = replace(local.oidc_issuer, "https://", "")
+
+  # IAM condition keys for an OIDC provider are its URL without the scheme.
+  gke_oidc_provider = replace(var.gke_oidc_issuer_url, "https://", "")
 }
 
 # --- Other stacks, found through data sources (no remote state) ---
@@ -261,33 +264,45 @@ resource "aws_iam_role_policy" "writer" {
   policy = data.aws_iam_policy_document.writer.json
 }
 
-# --- Reader: the replica on GKE ---
-# GKE can't use IRSA, so the replica uses an IAM user. Its access key is
-# created out of band (aws iam create-access-key) and goes straight into a
-# Kubernetes Secret, so no key ever reaches OpenTofu state or git. The user can
-# only read, and only from the GCP Cloud NAT IP. Replacing it with Workload
-# Identity Federation from GKE to an AWS role is a follow-up.
+# --- Reader: the replica on GKE, through federation with GKE's OIDC issuer ---
+# No key: pg-replica's pods get a short-lived Kubernetes service account token
+# with the audience sts.amazonaws.com, and exchange it for this role's
+# credentials with AssumeRoleWithWebIdentity, the same way IRSA works on EKS.
+# The role can only read, and only from the GCP Cloud NAT IP.
 
-resource "aws_iam_user" "reader" {
-  #checkov:skip=CKV_AWS_273:GKE can't use IRSA or SSO; a read-only user limited to the GCP NAT IP is the PoC trade-off. Workload Identity Federation is the follow-up.
-  name = "${local.name}-wal-reader"
-
-  # Lets `tofu destroy` remove the user even though its access key was created
-  # outside OpenTofu.
-  force_destroy = true
+resource "aws_iam_openid_connect_provider" "gke" {
+  url            = var.gke_oidc_issuer_url
+  client_id_list = ["sts.amazonaws.com"]
 }
 
-# Accepted: MFA can't apply to a machine identity using an access key; the
-# policy limits it to reads from the GCP NAT IP instead.
-# trivy:ignore:AVD-AWS-0123
-resource "aws_iam_group" "reader" {
-  name = "${local.name}-wal-readers"
+data "aws_iam_policy_document" "reader_trust" {
+  statement {
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+
+    principals {
+      type        = "Federated"
+      identifiers = [aws_iam_openid_connect_provider.gke.arn]
+    }
+
+    # CloudNativePG runs every instance (and its Barman Cloud sidecar) under
+    # a service account named after the Cluster.
+    condition {
+      test     = "StringEquals"
+      variable = "${local.gke_oidc_provider}:sub"
+      values   = ["system:serviceaccount:${var.database_namespace}:${var.replica_cluster_name}"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "${local.gke_oidc_provider}:aud"
+      values   = ["sts.amazonaws.com"]
+    }
+  }
 }
 
-resource "aws_iam_group_membership" "reader" {
-  name  = "${local.name}-wal-readers"
-  group = aws_iam_group.reader.name
-  users = [aws_iam_user.reader.name]
+resource "aws_iam_role" "reader" {
+  name               = "${local.name}-wal-reader"
+  assume_role_policy = data.aws_iam_policy_document.reader_trust.json
 }
 
 data "aws_iam_policy_document" "reader" {
@@ -336,8 +351,8 @@ data "aws_iam_policy_document" "reader" {
   }
 }
 
-resource "aws_iam_group_policy" "reader" {
+resource "aws_iam_role_policy" "reader" {
   name   = "wal-read-only"
-  group  = aws_iam_group.reader.name
+  role   = aws_iam_role.reader.id
   policy = data.aws_iam_policy_document.reader.json
 }

@@ -412,6 +412,46 @@ def check_postgres_images(clusters: list[tuple[str, dict]]) -> None:
         print(f"CloudNativePG Clusters share one digest-pinned PostgreSQL image ({len(images)})")
 
 
+def check_distributed_topology(clusters: list[tuple[str, dict]]) -> None:
+    """The CloudNativePG Clusters form one consistent distributed topology.
+
+    Every Cluster lists every member in externalClusters (each under its own
+    serverName), replays from another member, and at most one names itself
+    the primary. Two self-declared primaries would be two timelines: split
+    brain. During a switchover both may name the other, which is safe.
+    """
+    if len(clusters) < 2:
+        return
+    names = {c["metadata"]["name"] for _, c in clusters}
+    primaries = []
+    for where, cluster in clusters:
+        name = cluster["metadata"]["name"]
+        label = f"{where}: Cluster {name}"
+        replica = cluster.get("spec", {}).get("replica") or {}
+        me = replica.get("self", name)
+        if "enabled" in replica:
+            raise Failure(f"{label}: use replica.primary/source (distributed topology), not replica.enabled")
+        if replica.get("primary") not in names:
+            raise Failure(f"{label}: replica.primary must name one of {sorted(names)}")
+        if replica.get("source") not in names - {me}:
+            raise Failure(f"{label}: replica.source must name another member of {sorted(names)}")
+        external = {}
+        for ext in cluster["spec"].get("externalClusters", []):
+            external[ext["name"]] = (ext.get("plugin") or {}).get("parameters", {}).get("serverName")
+        if set(external) != names:
+            raise Failure(f"{label}: externalClusters must list exactly {sorted(names)}, found {sorted(external)}")
+        if mismatched := sorted(n for n, server in external.items() if server != n):
+            raise Failure(f"{label}: externalClusters {mismatched} must read the archive under their own name (serverName)")
+        if replica["primary"] == me:
+            primaries.append(label)
+        elif "promotionToken" in replica:
+            raise Failure(f"{label}: promotionToken only belongs on the cluster being promoted, but replica.primary is {replica['primary']}")
+    if len(primaries) > 1:
+        raise Failure("more than one Cluster names itself the primary (split brain):\n  " + "\n  ".join(primaries))
+    print(f"CloudNativePG Clusters form one distributed topology ({len(names)} members, primary: "
+          f"{primaries[0].rsplit(' ', 1)[1] if primaries else 'none, switchover in progress'})")
+
+
 def check_bootstrap_matches(helm_releases: dict[str, list[dict]]) -> None:
     """bootstrap.sh installs Cilium (and CoreDNS on EKS) at the versions Flux manages."""
     script = (ROOT / "k8s" / "bootstrap.sh").read_text()
@@ -527,6 +567,7 @@ def main() -> int:
             # before validating the custom resources that use them.
             outputs = {cloud: render_cloud(cloud, schema_dir, helm_releases, pg_clusters) for cloud in CLOUDS}
             check_postgres_images(pg_clusters)
+            check_distributed_topology(pg_clusters)
             print(f"strict schemas generated from installed CRDs: {sum(1 for _ in schema_dir.rglob('*.json'))}")
             for cloud, items in outputs.items():
                 print(f"== {cloud}")

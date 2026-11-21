@@ -76,6 +76,7 @@ run "names_are_stable" {
       google_kms_crypto_key.gke_secrets.name == "poc-mcpg-gke-secrets" &&
       google_kms_key_ring.wal.name == "poc-mcpg-wal" &&
       google_kms_crypto_key.wal.name == "poc-mcpg-wal" &&
+      google_iam_workload_identity_pool.eks.workload_identity_pool_id == "poc-mcpg-eks" &&
       google_kms_key_ring.state.location == "us-central1"
     )
     error_message = "A state bucket or KMS name or location changed; that would replace live resources."

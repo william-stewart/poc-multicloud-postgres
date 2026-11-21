@@ -1,3 +1,7 @@
+# The EKS member of the distributed topology, and its primary while
+# replica.primary names pg-primary. Switchover, failover and failback change
+# replica.primary on both Clusters; see "Switchover, failover and failback" in
+# the README.
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
@@ -12,10 +16,20 @@ spec:
   # GKE replica, which must run the same PostgreSQL major.
   primaryUpdateStrategy: unsupervised
 
+  # Which member is the primary of the whole topology, and where this one
+  # replays from when it isn't (after a switchover to GCP).
+  replica:
+    primary: pg-primary
+    source: pg-replica
+
   bootstrap:
     initdb:
       database: app
       owner: app
+      # The same app owner credentials on every member (make app-credentials),
+      # as CloudNativePG requires for a distributed topology.
+      secret:
+        name: app-owner
   enableSuperuserAccess: false
 
   postgresql:
@@ -31,8 +45,25 @@ spec:
       parameters:
         barmanObjectName: aws-store
 
+  # The distributed topology: every Cluster lists every member, each read
+  # through its archive. pg-replica's GCS archive is read-only from here. The validator checks both sides agree.
+  externalClusters:
+    - name: pg-primary
+      plugin:
+        name: barman-cloud.cloudnative-pg.io
+        parameters:
+          barmanObjectName: aws-store
+          serverName: pg-primary
+    - name: pg-replica
+      plugin:
+        name: barman-cloud.cloudnative-pg.io
+        parameters:
+          barmanObjectName: gcs-store-ro
+          serverName: pg-replica
+
   # The instances (and the plugin's sidecar) run as the pg-primary service
-  # account, which the writer role in infra/30-data/aws trusts.
+  # account, which the writer role in infra/30-data/aws trusts, and which
+  # Workload Identity Federation lets read the GCS archive (infra/30-data/gcp).
   serviceAccountTemplate:
     metadata:
       annotations:

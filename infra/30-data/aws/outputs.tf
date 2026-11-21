@@ -13,7 +13,7 @@ output "wal_writer_role_arn" {
   value       = aws_iam_role.writer.arn
 }
 
-output "wal_reader_user" {
-  description = "IAM user the GCP replica reads with. Create its access key out of band (see README)."
-  value       = aws_iam_user.reader.name
+output "wal_reader_role_arn" {
+  description = "Read-only role that cnpg-db/pg-replica on GKE assumes with its service account token."
+  value       = aws_iam_role.reader.arn
 }
