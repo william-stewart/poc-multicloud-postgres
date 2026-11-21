@@ -18,6 +18,23 @@ locals {
     gcp = "us-central1-a"
   }
 
+  # Same Kubernetes minor on both clouds. 1.36 is the newest version that is
+  # both in EKS standard support (1.34-1.37) and e2e-tested by Cilium 1.20
+  # (1.33-1.36). The GKE stack checks at plan time that GKE offers it.
+  kubernetes = {
+    version    = "1.36"
+    node_count = 2
+
+    # Minimal, hardened container OS per cloud: Bottlerocket on EKS and
+    # Container-Optimized OS on GKE. Both have read-only root filesystems,
+    # no package manager and no shell by default. The AWS value is an EKS
+    # ami_type; the GCP value is a GKE image_type.
+    node_image = {
+      aws = "BOTTLEROCKET_x86_64"
+      gcp = "COS_CONTAINERD"
+    }
+  }
+
   # Lowercase keys and values are valid as both AWS tags and GCP labels,
   # so one cost or inventory query works across clouds.
   labels = {

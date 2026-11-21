@@ -1,0 +1,19 @@
+{
+  "description": "Shared interface for the per-cloud Kubernetes cluster modules. Each subdirectory is one implementation and must declare these inputs (with these types) and outputs. Value shapes are checked by infra/tests/contracts/tests/cluster.tftest.hcl. Cloud-specific inputs and outputs are allowed on top.",
+  "inputs": {
+    "name": "string",
+    "kubernetes_version": "string",
+    "node_count": "number",
+    "machine_type": "string",
+    "node_image": "string",
+    "api_allowed_cidrs": "list(string)",
+    "labels": "map(string)"
+  },
+  "outputs": [
+    "cluster_name",
+    "cluster_endpoint",
+    "cluster_ca_certificate",
+    "oidc_issuer_url",
+    "kubeconfig_command"
+  ]
+}

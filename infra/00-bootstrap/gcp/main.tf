@@ -27,6 +27,28 @@ resource "google_kms_crypto_key" "state" {
   }
 }
 
+# Key for GKE application-layer secrets encryption. It lives here, not in
+# 20-clusters/gcp, because Cloud KMS key rings and keys can never be deleted:
+# a nightly teardown of the cluster stack would leave the names taken and break
+# the next apply. The cluster stack grants the GKE service agent access to it.
+resource "google_kms_key_ring" "gke" {
+  name     = "${var.name_prefix}-gke"
+  location = var.region
+
+  depends_on = [google_project_service.this]
+}
+
+resource "google_kms_crypto_key" "gke_secrets" {
+  name            = "${var.name_prefix}-gke-secrets"
+  key_ring        = google_kms_key_ring.gke.id
+  purpose         = "ENCRYPT_DECRYPT"
+  rotation_period = "7776000s" # 90 days
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
 # The Cloud Storage service agent encrypts objects with the key on our behalf.
 # No depends_on: it would defer the read to apply time, and the Storage API is
 # enabled by default in every project.
