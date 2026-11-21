@@ -1,0 +1,19 @@
+# Rule 8: pg-replica's own archive in GCS, HTTPS only, by name. Covers the
+# database pods and CloudNativePG's jobs, which all carry cnpg.io/cluster.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-gcs
+  namespace: cnpg-db
+spec:
+  endpointSelector:
+    matchExpressions:
+      - key: cnpg.io/cluster
+        operator: Exists
+  egress:
+    - toFQDNs:
+        - matchName: storage.googleapis.com
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP

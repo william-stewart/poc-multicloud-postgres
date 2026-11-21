@@ -1,8 +1,11 @@
-# GKE: the shared rules plus traffic between pg-replica's own instances. No
-# STS (the replica uses static, read-only keys) and no application access
-# (the replica is not served to applications in this PoC).
+# GKE: the shared rules plus traffic between pg-replica's own instances, and
+# its own archive in GCS through Workload Identity. No STS (the replica reads
+# S3 with static, read-only keys) and no application access (the replica is
+# not served to applications in this PoC).
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - ../base
   - allow-pg-replica-instances.yaml
+  - allow-gcs.yaml
+  - allow-gke-metadata.yaml

@@ -1,0 +1,17 @@
+# Base backups to GCS, taken on pg-replica itself: one as soon as it's ready,
+# then nightly at 03:00 UTC (after the primary's 02:00 backup). Without them
+# the GCS WAL archive alone couldn't restore anything.
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: pg-replica-nightly
+  namespace: cnpg-db
+spec:
+  cluster:
+    name: pg-replica
+  schedule: "0 0 3 * * *"
+  immediate: true
+  backupOwnerReference: self
+  method: plugin
+  pluginConfiguration:
+    name: barman-cloud.cloudnative-pg.io

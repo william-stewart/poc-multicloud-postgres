@@ -1,12 +1,15 @@
 # Replica PostgreSQL cluster on GKE, following the EKS primary by replaying
-# WAL from the S3 archive. ${VARS} come from the flux-system/data-vars
-# ConfigMap (make data-vars); the S3 credentials come from the aws-s3-reader
-# Secret (make replica-credentials). Neither is in git.
+# WAL from the S3 archive and archiving its own copy to GCS. ${VARS} come from
+# the flux-system/data-vars ConfigMap (make data-vars); the S3 credentials come
+# from the aws-s3-reader Secret (make replica-credentials). Neither is in git.
+# GCS needs no secret: Workload Identity.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 # The cnpg-db namespace comes from the policies layer, applied first.
 resources:
   - objectstore.yaml
+  - objectstore-gcs.yaml
   - cluster.yaml
+  - scheduledbackup.yaml
 components:
   - ../components/postgres-image

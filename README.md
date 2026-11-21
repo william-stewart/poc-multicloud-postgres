@@ -1,7 +1,8 @@
 # poc-multicloud-postgres
 
 A PostgreSQL primary on AWS (EKS) archives its WAL to S3, and a replica on Google
-Cloud (GKE) replays it from there. Both Kubernetes clusters run Cilium as their only
+Cloud (GKE) replays it from there. The replica archives its own copy of the WAL, with
+its own base backups, to GCS, so each cloud holds an independent copy of the backups. Both Kubernetes clusters run Cilium as their only
 CNI, with default-deny network policies, and Flux reconciles everything inside them
 from this repo.
 
@@ -22,6 +23,7 @@ flowchart LR
       replica[("pg-replica<br/>1 instance · cnpg-db<br/>replays WAL from S3<br/>default deny + allow rules")]
     end
     nat["Cloud NAT<br/>reserved IP"]
+    gcs[("GCS bucket · pg-replica/<br/>base backups + WAL<br/>versioned · CMEK")]
   end
 
   app -- "5432 only" --> primary
@@ -29,6 +31,7 @@ flowchart LR
   vpce --> s3
   s3 -- "read-only HTTPS<br/>static key, this IP only" --> nat
   nat --> replica
+  replica -- "every replayed WAL + base backups<br/>Workload Identity, no key" --> gcs
 ```
 
 There is no network path between the clouds, so there is no VPN. The replica's lag is
@@ -46,7 +49,7 @@ layer below it by name, so the order matters in both directions.
 | 3 | Clusters | `tofu apply` | 12–15 min (EKS) |
 | 4 | Platform: Cilium, CoreDNS, Flux, then Flux installs the rest | `make bootstrap` | 5–8 min |
 | 5 | Primary: WAL bucket and IAM, then network policies, then the database | `tofu apply`, `make data-vars` | 5 min + first backup |
-| 6 | Replica: network policies, then the database | `make replica-credentials`, `make data-vars` | 5 min |
+| 6 | Replica: GCS bucket and IAM, network policies, then the database | `tofu apply`, `make replica-credentials`, `make data-vars` | 5 min + first backup |
 
 ### Prerequisites
 
@@ -94,8 +97,9 @@ tofu -chdir=infra/00-bootstrap/gcp init && tofu -chdir=infra/00-bootstrap/gcp ap
 
 These two stacks keep their own state locally (gitignored) because they create the
 remote backends; keep those files. They are never torn down: buckets and keys have
-`prevent_destroy`, and the GKE Secrets key lives here because Cloud KMS keys can never
-be deleted.
+`prevent_destroy`, and the GKE Secrets key and the GCS WAL bucket's key live here
+because Cloud KMS keys can never be deleted. If you set up the GCP stack before the WAL
+key existed, apply it again to add the key.
 
 ### 2. Networks
 
@@ -175,6 +179,8 @@ hubble observe -n cnpg-db --verdict DROPPED -f
 ### 6. Replica on GKE
 
 ```sh
+gcp_init 30-data/gcp && tofu -chdir=infra/30-data/gcp apply -var project_id="$GCP_PROJECT"
+
 make replica-credentials CONTEXT="$GKE"
 make data-vars CLOUD=gcp CONTEXT="$GKE"
 kubectl --context "$GKE" -n cnpg-db get cluster pg-replica -w
@@ -186,6 +192,11 @@ from the AWS API to the Kubernetes API: no file, no git, no OpenTofu state. Runn
 again rotates the key. `make data-vars CLOUD=gcp` refuses to run until that Secret
 exists and the primary's first base backup is in S3, because the replica can't
 bootstrap without one.
+
+`infra/30-data/gcp` creates the replica's own GCS bucket and a Google service account
+that only `cnpg-db/pg-replica` can use, through Workload Identity, so there is no key
+to create. Once the replica is ready it takes its first base backup to GCS; wait for it
+to reach `completed` (`kubectl --context "$GKE" -n cnpg-db get backup`).
 
 ## Verify
 
@@ -203,6 +214,10 @@ kubectl cnpg psql pg-primary -n cnpg-db --context "$EKS" -- -d app -c \
   "CREATE TABLE IF NOT EXISTS ping(ts timestamptz); INSERT INTO ping VALUES (now()); SELECT pg_switch_wal();"
 kubectl cnpg psql pg-replica -n cnpg-db --context "$GKE" -- -d app -c \
   "SELECT max(ts) FROM ping; SELECT now() - pg_last_xact_replay_timestamp() AS lag;"
+
+# The replica keeps its own copy in GCS: base/ and wals/ under pg-replica/.
+gcloud storage ls "gs://$(tofu -chdir=infra/30-data/gcp output -raw wal_bucket)/pg-replica/"
+kubectl cnpg status pg-replica -n cnpg-db --context "$GKE"   # WAL archiving OK, last backup
 
 # The replica recovers from S3 after losing its pod.
 kubectl --context "$GKE" -n cnpg-db delete pod pg-replica-1
@@ -245,8 +260,9 @@ kubectl --context "$GKE" -n cnpg-db delete cluster pg-replica
 kubectl --context "$EKS" -n cnpg-db delete cluster pg-primary
 kubectl --context "$EKS" get pv; kubectl --context "$GKE" get pv   # wait until empty
 
-# 2. Cloud resources, top layer first. 30-data empties the bucket and removes the
+# 2. Cloud resources, top layer first. 30-data empties the buckets and removes the
 #    reader user together with the access key created in step 6.
+tofu -chdir=infra/30-data/gcp destroy -var project_id="$GCP_PROJECT"
 tofu -chdir=infra/30-data/aws destroy \
   -var "replica_egress_ips=$(tofu -chdir=infra/10-network/gcp output -json nat_egress_ips)"
 tofu -chdir=infra/20-clusters/gcp destroy -var project_id="$GCP_PROJECT" -var "api_allowed_cidrs=[\"$MY_IP\"]"
@@ -273,12 +289,36 @@ archive, with an RPO of about `archive_timeout` (60s). In exchange there's no VP
 inbound path between the clouds and little to operate. Streaming replication over an
 HA VPN is the upgrade path if lag must be lower.
 
+**An independent copy of the backups in each cloud.** `pg-primary` archives to S3
+in `us-east-1`. `pg-replica` replays from there and, as a CloudNativePG replica cluster,
+runs with `archive_mode=always`: every WAL segment it replays is archived again to its
+own GCS bucket in `us-central1`, and it takes its own nightly base backups there. The
+GCS copy is written by a GCP identity, with a GCP key, under `pg-replica/`, so nothing
+on the GCP side needs AWS to recover, and a promoted replica keeps archiving to the
+same place without a change. The cost is a second archive (about 1,440 WAL segments a
+day at `archive_timeout` 60s, gzip-compressed) and a second base backup.
+
+What still works when one cloud is lost:
+
+| Lost | Data | Still works | What's lost or degraded |
+| --- | --- | --- | --- |
+| AWS `us-east-1` | GCS holds `pg-replica`'s base backups and every WAL segment it replayed | Promote `pg-replica` (`replica.enabled: false`); it keeps archiving to GCS and taking backups, so it has PITR from the first GCS base backup on. If its volume is also lost, a new cluster can be restored from GCS | Writes since the last WAL the replica replayed: up to `archive_timeout` (60s), plus anything S3 held that the replica hadn't fetched yet. Applications on EKS. Promotion, fencing and client cutover are manual (see Known gaps) |
+| GCP `us-central1` | S3 holds `pg-primary`'s base backups and WAL | The primary, its archive and its backups are unaffected | The DR copy and the GCS backups. Rebuild the replica from S3 (step 6) once GCP is back |
+| Only one Kubernetes cluster | Both buckets | The other side as above; the lost side is rebuilt from its own bucket or the other cloud's | |
+
+Two limits of this design. The GCS copy can only be as current as the replica: if the
+replica stops replaying, the GCS archive stops too, so replication lag is also the age
+of the GCP backups. And Barman won't archive into a prefix that already holds another
+cluster's history, so a cluster restored from GCS must archive under a new name (a
+different `serverName`, or a new bucket), never back into `pg-replica/` or `pg-primary/`.
+
 **Least privilege.**
 
 | Identity | Can | Only |
 | --- | --- | --- |
 | WAL writer (IRSA, `cnpg-db/pg-primary`) | List, read, write, delete | `pg-primary/`, through the VPC's S3 gateway endpoint; the KMS key through S3 |
 | WAL reader (IAM user, GKE) | List, read | `pg-primary/`, from the GCP Cloud NAT IP; decrypt through S3 |
+| GCS WAL writer (Workload Identity, `cnpg-db/pg-replica`) | List, read, write, delete objects; read bucket metadata | The GCS WAL bucket; no project-level roles |
 | Cilium operator (IRSA) | The ENI calls in Cilium's docs | This account and region |
 | EBS CSI driver (IRSA) | AWS's EBS CSI policy | |
 
@@ -301,6 +341,8 @@ depends on `policies`), so no database pod ever runs unprotected:
 | 5 | Egress | Database pods → the bucket's regional S3 endpoints, by name | 443 | Both |
 | 6 | Egress | Database pods → STS (IRSA) | 443 | EKS |
 | 7 | Ingress | Namespace `app` → the current primary only | 5432 | EKS |
+| 8 | Egress | Database pods → `storage.googleapis.com` | 443 | GKE |
+| 9 | Egress | Database pods → GKE metadata server (Workload Identity tokens) | 80 | GKE |
 
 **Shared settings and module interfaces.** `infra/modules/settings` holds the values
 both clouds share (names, regions, zones, address plan, Kubernetes version, node OS,
@@ -326,7 +368,8 @@ stack's state file.
 | `infra/00-bootstrap/{aws,gcp}` | State buckets and long-lived KMS keys |
 | `infra/10-network/{aws,gcp}` | VPCs, subnets, NAT, S3 gateway endpoint, firewall |
 | `infra/20-clusters/{aws,gcp}` | EKS and GKE without a default CNI; IRSA roles |
-| `infra/30-data/aws` | WAL bucket, KMS key, writer role, reader user |
+| `infra/30-data/aws` | S3 WAL bucket, KMS key, writer role, reader user |
+| `infra/30-data/gcp` | GCS WAL bucket for the replica's own archive, its Workload Identity writer |
 | `infra/tests/contracts` | Contract tests for the per-cloud modules |
 | `k8s/flux` | Flux controllers (generated, images pinned by digest) |
 | `k8s/clusters/{aws,gcp}` | Each cluster's Flux entry point and `*.example.env` variable lists |
@@ -369,8 +412,8 @@ token and no cloud credentials.
   AWS role.
 - HA VPN and streaming replication, for lag under a minute.
 - A tested promotion and failback runbook. Promotion today is a manual change:
-  `replica.enabled: false` on `pg-replica`, and the promoted cluster must get its own
-  archive prefix and writer identity before it archives anything.
+  `replica.enabled: false` on `pg-replica`. It already archives to its own GCS prefix
+  with its own identity, but nothing yet fences the old primary or moves clients.
 - Alerts on archive failures and replica lag; regional, multi-AZ clusters; one NAT
   gateway per AZ.
 - Cluster-wide default deny (`cnpg-system`, `kube-system`) and security-group-level
