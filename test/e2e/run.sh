@@ -170,7 +170,13 @@ finish() {
   local code=$?
   trap - EXIT
   if [[ $scenario != clean ]]; then
-    if ((code != 0)) && ((failures == 0)); then record "run aborted (exit $code)" FAIL; fi
+    if ((code != 0)) && ((failures == 0)); then
+      record "run aborted (exit $code)" FAIL
+    elif ((failures == 0)) && [[ $scenario != finished ]]; then
+      # Exited 0 without reaching the end, as when bash hits a syntax error
+      # after run.sh is edited mid-run: never a pass.
+      record "run stopped before its last scenario (exit $code)" FAIL
+    fi
     write_evidence
     if ((failures > 0)); then dump_diagnostics; fi
     if [[ $KEEP == 1 ]]; then echo "E2E_KEEP=1: left installed; remove with make e2e-clean"; else clean; fi
@@ -578,3 +584,4 @@ test_kill_primary
 test_object_store_outage
 test_switchover
 test_unplanned_failover
+scenario=finished
