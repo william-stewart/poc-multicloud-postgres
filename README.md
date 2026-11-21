@@ -45,9 +45,8 @@ layer below it by name, so the order matters in both directions.
 | 2 | Networks | `tofu apply` | 3–5 min |
 | 3 | Clusters | `tofu apply` | 12–15 min (EKS) |
 | 4 | Platform: Cilium, CoreDNS, Flux, then Flux installs the rest | `make bootstrap` | 5–8 min |
-| 5 | Primary: WAL bucket and IAM, then the database | `tofu apply`, `make data-vars` | 5 min + first backup |
-| 6 | Replica | `make replica-credentials`, `make data-vars` | 5 min |
-| 7 | Network policies | automatic, after steps 5–6 | 1 min |
+| 5 | Primary: WAL bucket and IAM, then network policies, then the database | `tofu apply`, `make data-vars` | 5 min + first backup |
+| 6 | Replica: network policies, then the database | `make replica-credentials`, `make data-vars` | 5 min |
 
 ### Prerequisites
 
@@ -159,9 +158,19 @@ kubectl --context "$EKS" -n cnpg-db get cluster,backup -w
 ```
 
 `make data-vars` stores the bucket name, region and writer role in the
-`flux-system/data-vars` ConfigMap. Flux applies nothing in `k8s/data` until it exists,
-so the database never starts with empty values. Wait for `pg-primary` to be healthy
-and its first backup to reach `completed`.
+`flux-system/data-vars` ConfigMap. Flux applies nothing in `k8s/policies` or `k8s/data`
+until it exists, so the database never starts with empty values. Flux then applies the
+network policies first and the database only once they are ready, so no database pod
+ever runs without default deny. Wait for `pg-primary` to be healthy and its first
+backup to reach `completed`.
+
+If a flow is missing from the policies, archiving or the backup stalls. Find the
+dropped flow with Hubble rather than suspending the policies:
+
+```sh
+cilium --context "$EKS" hubble port-forward &
+hubble observe -n cnpg-db --verdict DROPPED -f
+```
 
 ### 6. Replica on GKE
 
@@ -177,19 +186,6 @@ from the AWS API to the Kubernetes API: no file, no git, no OpenTofu state. Runn
 again rotates the key. `make data-vars CLOUD=gcp` refuses to run until that Secret
 exists and the primary's first base backup is in S3, because the replica can't
 bootstrap without one.
-
-### 7. Network policies
-
-Flux applies `k8s/policies` on each cluster as soon as its data layer is healthy, so a
-policy mistake can't be confused with a replication problem. To record the real flows
-first, suspend the layer before step 5 and resume it afterwards:
-
-```sh
-flux --context "$EKS" suspend kustomization policies
-cilium --context "$EKS" hubble port-forward &
-hubble observe -n cnpg-db --since 10m -o compact
-flux --context "$EKS" resume kustomization policies
-```
 
 ## Verify
 
@@ -284,7 +280,8 @@ Container-Optimized OS with Shielded VM). The reader's static key is the known w
 spot; Workload Identity Federation from GKE to an AWS role would remove it.
 
 **Network policies.** Every pod in `cnpg-db` starts from default deny, and Cilium
-rules open only these flows:
+rules open only these flows. Flux applies them before the databases (the `data` layer
+depends on `policies`), so no database pod ever runs unprotected:
 
 | # | Direction | From → to | Ports | Cluster |
 | --- | --- | --- | --- | --- |

@@ -1,5 +1,6 @@
-# Database clusters live here on both clouds; default-deny network policies
-# for this namespace come with k8s/policies.
+# Database clusters live here on both clouds. The namespace belongs to the
+# policies layer, which Flux applies before the data layer, so the default
+# deny is in place before any database pod starts.
 apiVersion: v1
 kind: Namespace
 metadata:
