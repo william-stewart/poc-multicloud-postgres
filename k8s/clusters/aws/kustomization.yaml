@@ -1,0 +1,7 @@
+# Flux entry point for the AWS cluster. Flux reconciles this directory
+# from main, so it manages its own install.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../flux
+  - flux-sync.yaml

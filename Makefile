@@ -48,6 +48,10 @@ tofu-test: tofu-validate ## tofu test (mock providers) in every stack that has t
 	  if [ -d "$$s/tests" ]; then echo "==> test $$s"; tofu -chdir=$$s test -no-color; fi; \
 	done
 
+.PHONY: flux-manifests
+flux-manifests: ## Regenerate k8s/flux/gotk-components.yaml with the pinned flux CLI
+	flux install --export > k8s/flux/gotk-components.yaml
+
 .PHONY: secrets-history
 secrets-history: ## Scan the full git history for secrets
 	gitleaks git --redact --no-banner .
