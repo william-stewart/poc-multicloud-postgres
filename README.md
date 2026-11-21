@@ -403,14 +403,16 @@ tofu -chdir=infra/30-data/aws destroy \
   -var gke_oidc_issuer_url="$(tofu -chdir=infra/20-clusters/gcp output -raw oidc_issuer_url)"
 tofu -chdir=infra/20-clusters/gcp destroy -var project_id="$GCP_PROJECT" -var "api_allowed_cidrs=[\"$MY_IP\"]"
 tofu -chdir=infra/20-clusters/aws destroy -var "api_allowed_cidrs=[\"$MY_IP\"]"
+make cilium-enis            # lists ENIs Cilium left in the VPC; DELETE=1 removes them
 tofu -chdir=infra/10-network/gcp destroy -var project_id="$GCP_PROJECT"
 tofu -chdir=infra/10-network/aws destroy
 ```
 
-The state backends stay. If `10-network/aws` hangs on network interfaces, look for
-leftover ENIs from Cilium in the VPC
-(`aws ec2 describe-network-interfaces --filters Name=status,Values=available`) and
-delete them. When you're done with the project for good, also remove the deploy key
+The state backends stay. In ENI mode the Cilium operator creates ENIs and
+garbage-collects the unattached ones every 5 minutes, but once the cluster is gone
+nothing does, and a leftover ENI blocks the VPC's destroy. `make cilium-enis` lists
+the unattached ENIs in this VPC tagged `io.cilium/cilium-managed=true`, and with
+`DELETE=1` deletes exactly those. When you're done with the project for good, also remove the deploy key
 (`gh repo deploy-key delete`) and `secrets/flux-deploy-key*`.
 
 ## Design
@@ -447,6 +449,58 @@ replica stops replaying, the GCS archive stops too, so replication lag is also t
 of the GCP backups. And Barman won't archive into a prefix that already holds another
 cluster's history, so a cluster restored from GCS must archive under a new name (a
 different `serverName`, or a new bucket), never back into `pg-replica/` or `pg-primary/`.
+
+**Self-managed Cilium on both clouds.** Both clusters run the same pinned Cilium
+release as their only CNI: in ENI mode on EKS, with no VPC CNI, kube-proxy or managed
+CoreDNS, and on GKE's legacy datapath rather than Dataplane V2, which is Google's
+managed Cilium. It's a deliberate trade-off, and the costs are real.
+
+What it buys:
+
+- **One policy model on both clouds.** The default deny is built on
+  `CiliumNetworkPolicy` FQDN egress rules (S3, STS, GCS). A plain `NetworkPolicy`
+  can't express "only this hostname". Dataplane V2 and the VPC CNI's network policy
+  agent enforce `NetworkPolicy`, but FQDN egress there means another API per cloud
+  (or IP ranges that change), so the policies would be written and tested twice.
+- **The same datapath and the same tools everywhere.** One Cilium version, one set of
+  values, and Hubble on both clusters, so a dropped flow is debugged the same way on
+  either side, and policy behavior is tested once.
+- **A cloud-neutral layer.** Kubernetes is the portability layer here; with the CNI in
+  `k8s/`, everything above the cloud primitives is the same on both clouds.
+
+What it costs:
+
+- **A bootstrap step.** Nothing runs before the CNI, and on EKS Flux can't resolve
+  `github.com` before CoreDNS, so `bootstrap.sh` installs Cilium and CoreDNS with Helm
+  before Flux exists. Flux then adopts the same releases. Both read the same values
+  files, and `make validate` checks that the versions match, so the two can't drift.
+- **Upgrades are ours.** Google and AWS upgrade Dataplane V2 and the VPC CNI with the
+  cluster; here the team must. Cilium also bounds the Kubernetes version: 1.36 is the
+  newest minor that Cilium 1.20 is tested against (`infra/modules/settings`).
+- **Support and teardown.** A CNI problem isn't the cloud provider's to fix, and in ENI
+  mode the operator's ENIs outlive the cluster (`make cilium-enis`, above).
+
+When managed networking is the better choice: when L3/L4 `NetworkPolicy` is enough,
+when the team has no Cilium experience to own upgrades and incidents, or when only one
+cloud is in play. Then Dataplane V2 on GKE, and the VPC CNI with its network policy
+agent on EKS, remove the bootstrap step and the upgrade work. A middle ground on EKS is
+Cilium in chaining mode on top of the VPC CNI: AWS keeps IPAM and ENIs, and Cilium
+adds FQDN policy and Hubble. For this PoC, identical FQDN egress policy on both clouds
+was the requirement that decided it.
+
+**Upgrading Cilium**, one minor at a time, always before the Kubernetes minor that
+needs it:
+
+1. Read the upgrade notes for the target release, and set `upgradeCompatibility` in
+   `k8s/platform/base/cilium/values.yaml` to the version you're upgrading from.
+2. Bump the chart version in `k8s/platform/base/cilium/helmrelease.yaml` and
+   `CILIUM_VERSION` in `k8s/bootstrap.sh` together (`make validate` fails if they
+   differ), then merge. Flux upgrades the release, and the agents roll one node at a
+   time.
+3. Check `cilium status --wait` and `hubble observe --verdict DROPPED` on both
+   clusters, then remove `upgradeCompatibility`.
+4. Only then raise `kubernetes.version` in `infra/modules/settings`, within the range
+   the new Cilium release is tested against.
 
 **Least privilege.**
 

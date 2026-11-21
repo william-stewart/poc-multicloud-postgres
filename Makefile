@@ -72,6 +72,10 @@ app-credentials: ## Store the same app owner credentials on both clusters: EKS=<
 	fi
 	k8s/app-credentials.sh "$(EKS)" "$(GKE)"
 
+.PHONY: cilium-enis
+cilium-enis: ## List ENIs Cilium left in the EKS VPC after teardown; DELETE=1 removes them
+	scripts/cilium-enis.sh $(if $(DELETE),--delete)
+
 .PHONY: flux-manifests
 flux-manifests: ## Regenerate k8s/flux/gotk-components.yaml with the pinned flux CLI
 	flux install --export > k8s/flux/gotk-components.yaml
