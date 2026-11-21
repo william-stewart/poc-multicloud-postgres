@@ -18,5 +18,18 @@ terraform {
       source  = "hashicorp/google"
       version = "~> 8.12"
     }
+    # Used inside the EKS module; declared so the tests can mock them.
+    tls = {
+      source = "hashicorp/tls"
+    }
+    time = {
+      source = "hashicorp/time"
+    }
+    null = {
+      source = "hashicorp/null"
+    }
+    cloudinit = {
+      source = "hashicorp/cloudinit"
+    }
   }
 }

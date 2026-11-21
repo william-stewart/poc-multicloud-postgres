@@ -14,6 +14,8 @@ run Cilium as the only CNI, with default-deny network policies.
 | `infra/modules/settings` | OpenTofu | Values both clouds share: names, regions, zones, address plan, labels |
 | `infra/modules/network/{aws,gcp}` | OpenTofu | One network module per cloud behind a shared interface |
 | `infra/modules/network-lookup/{aws,gcp}` | OpenTofu | Read-only lookups of those networks, for stacks that keep their own state |
+| `infra/modules/cluster/{aws,gcp}` | OpenTofu | One Kubernetes cluster module per cloud behind a shared interface |
+| `infra/tests/contracts` | OpenTofu (`tofu test`) | Contract tests that run every per-cloud implementation against mocks |
 | `infra/00-bootstrap/{aws,gcp}` | OpenTofu | Remote state buckets (S3 with native locking, GCS) |
 | `infra/10-network/{aws,gcp}` | OpenTofu | VPCs, subnets, NAT, S3 gateway endpoint |
 | `infra/20-clusters/{aws,gcp}` | OpenTofu | EKS and GKE without a default CNI |
@@ -29,28 +31,32 @@ Two patterns keep the clouds consistent without hiding their differences.
 
 **One settings module.** `infra/modules/settings` has no providers and no
 resources. It returns the values both clouds must agree on: the name prefix,
-regions, zones, address plan and base labels. Every stack calls it, so each value
+regions, zones, address plan, Kubernetes version and node count, and base labels.
+Every stack calls it, so each value
 is defined once. Validation rejects address ranges that overlap, fall outside
 `10.0.0.0/8`, or have host bits set.
 
 **Matching interfaces, separate implementations.** Each cloud has its own module
 (`infra/modules/network/aws`, `.../gcp`), and each stack picks the one for its
-cloud. There is no `cloud = "aws"` switch inside a module. Both modules declare the
-inputs and outputs listed in `infra/modules/network/contract.json`:
+cloud. There is no `cloud = "aws"` switch inside a module. Each pair declares the
+inputs and outputs listed in its `contract.json`:
 
-| Inputs | Outputs |
-| --- | --- |
-| `name`, `region`, `cidr`, `labels` | `network_id`, `network_name`, `private_subnet_ids`, `nat_egress_ips` |
+| Contract | Inputs | Outputs |
+| --- | --- | --- |
+| `modules/network` | `name`, `region`, `cidr`, `labels` | `network_id`, `network_name`, `private_subnet_ids`, `nat_egress_ips` |
+| `modules/network-lookup` | `name`, `region` | the same four as `network` |
+| `modules/cluster` | `name`, `kubernetes_version`, `node_count`, `machine_type`, `api_allowed_cidrs`, `labels` | `cluster_name`, `cluster_endpoint`, `cluster_ca_certificate`, `oidc_issuer_url`, `kubeconfig_command` |
 
 Features that exist on only one cloud stay as extra inputs and outputs on that
-module: AWS zone IDs and the S3 gateway endpoint, GCP secondary ranges.
+module: for example AWS zone IDs, the S3 gateway endpoint and IRSA roles, or GCP
+secondary ranges and the Secrets encryption key.
 
 Two checks enforce the interface, and each catches what the other can't:
 
 | Check | What it verifies | How |
 | --- | --- | --- |
 | `scripts/check_module_contracts.py` (pre-commit hook) | Every contract input and output is **declared**, and input types match | Reads the `.tf` files; no providers needed |
-| `infra/tests/contracts` (`tofu test`) | The outputs' **values** have the contracted shape: `network_id` a non-empty string, `private_subnet_ids` a list (not a tuple) of strings, `nat_egress_ips` a list of IPv4 addresses | Runs each implementation against mock providers |
+| `infra/tests/contracts` (`tofu test`) | The outputs' **values** have the contracted shape, for example `private_subnet_ids` a list (not a tuple) of strings, `nat_egress_ips` a list of IPv4 addresses, `cluster_endpoint` an `https://` URL | Runs each implementation against mock providers |
 
 This contract format and checker are specific to this repo, not an industry
 standard. OpenTofu has no built-in notion of a module interface.
@@ -137,6 +143,48 @@ tofu -chdir=infra/10-network/gcp init \
   -backend-config="bucket=$(tofu -chdir=infra/00-bootstrap/gcp output -raw state_bucket)"
 tofu -chdir=infra/10-network/gcp plan -var project_id=<project>
 ```
+
+## Clusters (`infra/20-clusters`)
+
+Both clusters run Kubernetes **1.36**, the newest minor version that is in EKS
+standard support (1.34 to 1.37) and in Cilium 1.20's tested range (1.33 to 1.36).
+The GKE stack checks at plan time that GKE offers it. Nodes start with the taint
+`node.cilium.io/agent-not-ready=true:NoExecute`, so they stay `NotReady` and run
+nothing until Cilium is installed (`k8s/platform`).
+
+| | EKS (`us-east-1`) | GKE (`us-central1-a`, zonal) |
+| --- | --- | --- |
+| Default CNI | None. The EKS module v21 never bootstraps self-managed add-ons, and no EKS add-ons are configured, so there is no VPC CNI, kube-proxy or CoreDNS | Legacy datapath (not Dataplane V2), GKE network policy add-on off |
+| Nodes | 2 x `m6i.large`, AL2023, in the private subnets | 2 x `e2-standard-4`, COS, private nodes. Created without a default node pool, so no node ever lacks the Cilium taint |
+| API endpoint | Public and private; public limited to `api_allowed_cidrs` | Public; limited to `api_allowed_cidrs` |
+| Secrets encryption | KMS key created by the EKS module | KMS key from `00-bootstrap/gcp` (Cloud KMS keys can never be deleted, so it outlives nightly teardowns) |
+| Node credentials | IMDSv2 required, hop limit 1; the node role has no VPC CNI policy | Dedicated service account with `roles/container.defaultNodeServiceAccount`; GKE metadata server |
+| Workload identity | IRSA, with roles for `cilium-operator` (only the ENI permissions in Cilium's docs) and `ebs-csi-controller-sa` | Workload Identity |
+
+`api_allowed_cidrs` is required and rejects `/0`. Pass your own IP:
+
+```sh
+MY_IP="$(curl -s https://checkip.amazonaws.com)/32"
+
+tofu -chdir=infra/20-clusters/aws init \
+  -backend-config="bucket=$(tofu -chdir=infra/00-bootstrap/aws output -raw state_bucket)" \
+  -backend-config="region=us-east-1" \
+  -backend-config="kms_key_id=$(tofu -chdir=infra/00-bootstrap/aws output -raw state_kms_key_arn)"
+tofu -chdir=infra/20-clusters/aws plan -var "api_allowed_cidrs=[\"$MY_IP\"]"
+
+# Re-apply 00-bootstrap/gcp first: it now also creates the GKE Secrets key.
+tofu -chdir=infra/20-clusters/gcp init \
+  -backend-config="bucket=$(tofu -chdir=infra/00-bootstrap/gcp output -raw state_bucket)"
+tofu -chdir=infra/20-clusters/gcp plan -var project_id=<project> -var "api_allowed_cidrs=[\"$MY_IP\"]"
+
+# Then add both clusters to your kubeconfig:
+eval "$(tofu -chdir=infra/20-clusters/aws output -raw kubeconfig_command)"
+eval "$(tofu -chdir=infra/20-clusters/gcp output -raw kubeconfig_command)"
+```
+
+EKS needs the **EBS CSI driver** for persistent volumes (CloudNativePG uses gp3).
+It isn't an EKS add-on here, so `k8s/platform` installs it with Helm, using the
+IRSA role from `tofu output ebs_csi_role_arn`.
 
 ## Local validation
 
