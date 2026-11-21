@@ -350,6 +350,30 @@ def check_flux_version() -> None:
     print(f"Flux controller images pinned by digest ({len(upstream)})")
 
 
+# Objects whose deletion would take down cluster networking (and with it Flux)
+# or delete a database. Flux must never prune them.
+NEVER_PRUNE = {
+    ("HelmRelease", "kube-system", "cilium"),
+    ("HelmRelease", "kube-system", "coredns"),
+}
+NEVER_PRUNE_KINDS = {("postgresql.cnpg.io", "Cluster")}
+
+
+def check_never_pruned(docs: list[dict], where: str) -> None:
+    """Objects Flux must never delete carry kustomize.toolkit.fluxcd.io/prune: disabled."""
+    for d in docs:
+        meta = d.get("metadata", {})
+        key = (d.get("kind"), meta.get("namespace"), meta.get("name"))
+        group = d.get("apiVersion", "").split("/")[0]
+        if key not in NEVER_PRUNE and (group, d.get("kind")) not in NEVER_PRUNE_KINDS:
+            continue
+        if (meta.get("annotations") or {}).get("kustomize.toolkit.fluxcd.io/prune") != "disabled":
+            raise Failure(
+                f"{where}: {key[0]} {key[1]}/{key[2]} must have the annotation "
+                "kustomize.toolkit.fluxcd.io/prune: disabled, or removing it from git deletes it"
+            )
+
+
 def check_bootstrap_matches(helm_releases: dict[str, list[dict]]) -> None:
     """bootstrap.sh installs Cilium (and CoreDNS on EKS) at the versions Flux manages."""
     script = (ROOT / "k8s" / "bootstrap.sh").read_text()
@@ -423,7 +447,8 @@ def render_cloud(cloud: str, schema_dir: Path, helm_releases: dict[str, list[dic
         outputs.append((f"{cloud}/{name} ({path})", built, False))
 
         docs = load_docs(built)
-        releases = [d for d in docs if d.get("kind") == "HelmRelease"]
+        check_never_pruned(docs, f"{cloud}/{name} ({path})")
+        releases =[d for d in docs if d.get("kind") == "HelmRelease"]
         helm_releases.setdefault(cloud, []).extend(releases)
         for hr in releases:
             if hr["metadata"]["name"] == "cilium":
@@ -433,6 +458,13 @@ def render_cloud(cloud: str, schema_dir: Path, helm_releases: dict[str, list[dic
             # Charts may render custom resources whose CRDs nothing here
             # installs; those are skipped, everything else is strict.
             outputs.append((label, manifests, True))
+
+    # Removing or renaming these would make Flux leave the running release
+    # unmanaged (prune is disabled), so make it a deliberate change here too.
+    required = {("kube-system", "cilium")} | ({("kube-system", "coredns")} if cloud == "aws" else set())
+    present = {(hr["metadata"]["namespace"], hr["metadata"]["name"]) for hr in helm_releases.get(cloud, [])}
+    if missing := sorted(required - present):
+        raise Failure(f"{cloud}: HelmRelease(s) missing: {', '.join('/'.join(m) for m in missing)}")
 
     for source, env in envs.items():
         if unused := sorted(env.keys() - used_by_file.get(source, set())):

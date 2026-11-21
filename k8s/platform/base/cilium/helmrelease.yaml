@@ -7,6 +7,11 @@ kind: HelmRelease
 metadata:
   name: cilium
   namespace: kube-system
+  annotations:
+    # Deleting this HelmRelease would uninstall the CNI, cutting off every pod,
+    # Flux included, so it couldn't recover. Flux never prunes it: removing it
+    # from git leaves it in the cluster, to be deleted by hand if ever needed.
+    kustomize.toolkit.fluxcd.io/prune: disabled
 spec:
   interval: 30m
   releaseName: cilium

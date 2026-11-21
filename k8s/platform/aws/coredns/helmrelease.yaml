@@ -3,6 +3,10 @@ kind: HelmRelease
 metadata:
   name: coredns
   namespace: kube-system
+  annotations:
+    # Deleting this HelmRelease would uninstall cluster DNS on EKS, and Flux
+    # needs DNS to reach git, so it couldn't recover. Flux never prunes it.
+    kustomize.toolkit.fluxcd.io/prune: disabled
 spec:
   interval: 30m
   releaseName: coredns
