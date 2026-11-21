@@ -1,5 +1,5 @@
 # Local validation only: nothing here talks to a cloud API or a cluster.
-# Every stack is initialised with -backend=false, so no state is read or written.
+# Every stack is initialized with -backend=false, so no state is read or written.
 
 SHELL := /usr/bin/env bash
 .SHELLFLAGS := -euo pipefail -c

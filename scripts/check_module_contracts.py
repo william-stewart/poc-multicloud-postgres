@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check that per-cloud module implementations honour their shared interface.
+"""Check that per-cloud module implementations honor their shared interface.
 
 For every infra/modules/<name>/contract.json, each subdirectory of
 infra/modules/<name>/ that contains .tf files is an implementation. It must
