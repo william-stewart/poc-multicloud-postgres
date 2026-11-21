@@ -24,11 +24,22 @@ images:
     newTag: v1.10.2
     digest: sha256:1405a9e460833df9aff920664243c0df271f42be05e0bf38db31d2b7e9ebbaab
 
-# Accepted checkov findings on Flux's own manifests, recorded where they apply.
-# (Pinning images by digest already satisfies the pull-policy check.)
-# Strategic-merge patches add these annotations without replacing any that
-# upstream sets. With a target, the name in each patch is ignored.
+# Fail a Kustomization when a ${VAR} it substitutes is not defined, instead of
+# silently substituting an empty string. An empty bucket region would, for
+# example, turn the S3 egress rule into s3..amazonaws.com and stop archiving.
 patches:
+  - target:
+      kind: Deployment
+      name: kustomize-controller
+    patch: |
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --feature-gates=StrictPostBuildSubstitutions=true
+
+  # Accepted checkov findings on Flux's own manifests, recorded where they apply.
+  # (Pinning images by digest already satisfies the pull-policy check.)
+  # Strategic-merge patches add these annotations without replacing any that
+  # upstream sets. With a target, the name in each patch is ignored.
   - target:
       kind: Deployment
       namespace: flux-system

@@ -209,7 +209,9 @@ a plain `values.yaml` next to it (shared values in `base/`, cloud values in the
 overlay). Account-specific values, such as the EKS API host and IAM role ARNs, are
 not in git. `bootstrap.sh` writes them from `tofu output` into the
 `flux-system/cluster-vars` ConfigMap, and Flux substitutes them into the manifests.
-`cluster-vars.example.env` lists them for each cluster.
+`cluster-vars.example.env` lists them for each cluster. Flux runs with strict
+substitution: a manifest that uses a variable missing from its ConfigMap fails
+to apply, instead of getting an empty string.
 
 The Flux install manifests are committed (`make flux-manifests`), not created by
 `flux bootstrap`, which would push to `main` directly. Controller images are pinned
