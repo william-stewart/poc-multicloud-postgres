@@ -216,7 +216,7 @@
       "id": 5,
       "type": "timeseries",
       "title": "Seconds since the last WAL segment was archived",
-      "description": "Per Cluster. pg-primary archives to S3, pg-replica to GCS. archive_timeout (60s) closes a segment at least every minute, so a healthy archive saw-tooths below the dashed line. A line climbing past it means archiving has stopped: that is the recovery point growing.",
+      "description": "Per Cluster. pg-primary archives to S3, pg-replica to GCS. archive_timeout (60s) closes a segment a minute after the last switch, but only if WAL was written since, so a quiet database saw-tooths up to about two minutes (the dashed line). A line that keeps climbing past it means archiving has stopped: the recovery point is growing.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -261,7 +261,7 @@
               },
               {
                 "color": "red",
-                "value": 60
+                "value": 120
               }
             ]
           }

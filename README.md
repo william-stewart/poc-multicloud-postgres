@@ -292,8 +292,8 @@ port 9187. One PodMonitor scrapes them every 10s. Each scenario has its own shap
 | --- | --- | --- |
 | Role of each Cluster | Primary, replica, no primary (should be primary, nothing accepts writes) or fenced | 3: a few seconds of no primary. 5: the roles swap and swap back. 6: `pg-replica` turns primary, `pg-primary` fenced |
 | PostgreSQL up, per instance | Whether each pod's PostgreSQL answers | 3: the killed pod drops out and comes back |
-| Seconds since the last WAL segment was archived | Per Cluster, against `archive_timeout` (60s) | 4: the primary's line climbs past 60s until the store is back |
-| WAL segments each archive is behind the newest | The replica's line is the cross-cloud lag | 1 and 4: it rises while the replica waits, then drops to 0 |
+| Seconds since the last WAL segment was archived | Per Cluster. Up to about 2 minutes when quiet: `archive_timeout` (60s) only switches a segment that has new WAL | 4: both lines climb past 2 minutes until the store is back |
+| WAL segments each archive is behind the newest | The replica's line is the cross-cloud lag | 1: it rises until the replica replays the new segment. 4 stops both archives, so it stays flat |
 | WAL segments waiting to be archived | `.ready` files piling up on the WAL volume | 4: they pile up during the outage, then drain |
 | Failed archive attempts | Per minute | 4 |
 | Age of the last base backup, recovery window | Per archive, from the Barman Cloud plugin | 0: both archives get their first backup |
