@@ -29,6 +29,9 @@ For each cloud:
 It also renders the end-to-end test's overlays (test/e2e/manifests), which
 adapt k8s/data to a local cluster, and validates them strictly the same way,
 so a change in k8s/data that breaks the end-to-end test fails here first.
+And it renders k8s/monitoring (Prometheus, Grafana, the PodMonitor and the
+dashboard), which no Flux Kustomization applies yet but the end-to-end test
+installs, the same way, and checks that the dashboard is valid JSON.
 
 It also checks that bootstrap.sh installs the versions Flux manages, and that
 the Flux images pinned by digest match the generated Flux manifests.
@@ -303,8 +306,12 @@ def unknown_keys(values, schema, root: dict, path: str = "") -> list[str]:
     return found
 
 
-def render_helm_releases(docs: list[dict], cloud: str) -> list[tuple[str, str]]:
-    """Render every HelmRelease; return (label, manifests) pairs."""
+def render_helm_releases(docs: list[dict], cloud: str, include_crds: bool = False) -> list[tuple[str, str]]:
+    """Render every HelmRelease; return (label, manifests) pairs.
+
+    include_crds also renders the chart's crds/ directory, for charts that
+    ship their CRDs there rather than as templates.
+    """
     repos = {(d["metadata"]["namespace"], d["metadata"]["name"]): d for d in docs if d.get("kind") == "HelmRepository"}
     configmaps = {(d["metadata"]["namespace"], d["metadata"]["name"]): d for d in docs if d.get("kind") == "ConfigMap"}
     rendered = []
@@ -337,6 +344,7 @@ def render_helm_releases(docs: list[dict], cloud: str) -> list[tuple[str, str]]:
             manifests = run([
                 "helm", "template", hr["spec"].get("releaseName", name), str(chart),
                 "--namespace", ns, "--kube-version", KUBERNETES_VERSION, "-f", f.name,
+                *(["--include-crds"] if include_crds else []),
             ])
         rendered.append((f"helm template {ns}/{name} ({spec['chart']} {spec['version']})", manifests))
     return rendered
@@ -599,6 +607,29 @@ def check_e2e_overlays(schema_dir: Path) -> None:
         kubeconform(manifests, f"test/e2e/{name}", schema_dir)
 
 
+def render_monitoring(schema_dir: Path) -> list[tuple[str, str, bool]]:
+    """Render k8s/monitoring: its HelmRelease, then ./config against the chart's CRDs."""
+    path = ROOT / "k8s" / "monitoring"
+    built = run(["kustomize", "build", str(path)])
+    docs = load_docs(built)
+    outputs = [("k8s/monitoring", built, False)]
+    for label, manifests in render_helm_releases(docs, "monitoring", include_crds=True):
+        collect_crd_schemas(load_docs(manifests), schema_dir)
+        outputs.append((label, manifests, True))
+    config = run(["kustomize", "build", str(path / "config")])
+    for cm in (d for d in load_docs(config) if d.get("kind") == "ConfigMap"):
+        for key, value in cm.get("data", {}).items():
+            if key.endswith(".json"):
+                try:
+                    dashboard = json.loads(value)
+                except json.JSONDecodeError as e:
+                    raise Failure(f"k8s/monitoring/config: dashboard {key} isn't valid JSON: {e}") from e
+                if not dashboard.get("uid"):
+                    raise Failure(f"k8s/monitoring/config: dashboard {key} has no uid, so Grafana would duplicate it")
+    outputs.append(("k8s/monitoring/config", config, False))
+    return outputs
+
+
 def main() -> int:
     try:
         check_flux_version()
@@ -609,6 +640,7 @@ def main() -> int:
             # Render everything first, so the CRDs of every chart are known
             # before validating the custom resources that use them.
             outputs = {cloud: render_cloud(cloud, schema_dir, helm_releases, pg_clusters) for cloud in CLOUDS}
+            outputs["monitoring"] = render_monitoring(schema_dir)
             check_postgres_images(pg_clusters)
             check_distributed_topology(pg_clusters)
             print(f"strict schemas generated from installed CRDs: {sum(1 for _ in schema_dir.rglob('*.json'))}")

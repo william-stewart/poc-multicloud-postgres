@@ -1,0 +1,56 @@
+# kube-prometheus-stack, cut down to what the PostgreSQL dashboard needs: the
+# Prometheus Operator, one Prometheus and Grafana. No Alertmanager, no
+# exporters, no default rules or dashboards, no scraping of the Kubernetes
+# components, so it fits next to four PostgreSQL instances on one laptop.
+defaultRules:
+  create: false
+alertmanager:
+  enabled: false
+kubernetesServiceMonitors:
+  enabled: false
+kubeStateMetrics:
+  enabled: false
+nodeExporter:
+  enabled: false
+
+prometheusOperator:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      memory: 128Mi
+
+prometheus:
+  prometheusSpec:
+    # Short enough to see a failover or a WAL switch as it happens.
+    scrapeInterval: 10s
+    evaluationInterval: 10s
+    retention: 2d
+    # Pick up every PodMonitor (k8s/monitoring/config), not only the chart's.
+    podMonitorSelectorNilUsesHelmValues: false
+    serviceMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        memory: 512Mi
+
+grafana:
+  defaultDashboardsEnabled: false
+  # No adminPassword here: the Grafana chart generates one into the
+  # kube-prometheus-stack-grafana Secret. Anyone who can reach Grafana can
+  # view dashboards without logging in; it is only reachable through
+  # kubectl port-forward.
+  grafana.ini:
+    auth.anonymous:
+      enabled: true
+      org_role: Viewer
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 256Mi
