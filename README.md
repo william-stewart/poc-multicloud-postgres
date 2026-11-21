@@ -5,23 +5,30 @@ Cloud (GKE) replays it from there. Both Kubernetes clusters run Cilium as their 
 CNI, with default-deny network policies, and Flux reconciles everything inside them
 from this repo.
 
-```
-AWS us-east-1 (VPC 10.10.0.0/16)                 GCP us-central1 (VPC, nodes 10.20.0.0/20)
-+-------------------------------------+          +-------------------------------------+
-| EKS 1.36, Bottlerocket nodes        |          | GKE 1.36 (zonal), COS nodes         |
-| Cilium ENI mode + kube-proxy repl.  |          | Cilium, legacy datapath             |
-| no VPC CNI, no kube-proxy           |          | no inbound path from AWS            |
-|                                     |          |                                     |
-|  [namespace app] --5432 only--+     |          |  [pg-replica: 1 instance]           |
-|                               v     |          |   replays WAL from S3               |
-|  [pg-primary: 2 instances, cnpg-db] |          |   default deny + allow rules        |
-|   default deny + allow rules        |          |        ^                            |
-+--------|----------------------------+          +--------|----------------------------+
-         | WAL every <=60s, base backups                  | read-only, HTTPS
-         | IRSA writer, via S3 gateway endpoint           | static key, from Cloud NAT IP only
-         v                                                |
-  [S3: pg-primary/ base backups + WAL] -------------------+
-   versioned, KMS-encrypted, TLS only
+```mermaid
+flowchart LR
+  subgraph AWS["AWS · us-east-1 · VPC 10.10.0.0/16"]
+    subgraph EKS["EKS 1.36 · Bottlerocket · Cilium only (no VPC CNI, no kube-proxy)"]
+      app["namespace app"]
+      primary[("pg-primary<br/>2 instances · cnpg-db<br/>default deny + allow rules")]
+    end
+    vpce["S3 gateway endpoint"]
+  end
+
+  s3[("S3 bucket · pg-primary/<br/>base backups + WAL<br/>versioned · KMS-encrypted · TLS only")]
+
+  subgraph GCP["GCP · us-central1 · nodes 10.20.0.0/20"]
+    subgraph GKE["GKE 1.36 · COS · Cilium only"]
+      replica[("pg-replica<br/>1 instance · cnpg-db<br/>replays WAL from S3<br/>default deny + allow rules")]
+    end
+    nat["Cloud NAT<br/>reserved IP"]
+  end
+
+  app -- "5432 only" --> primary
+  primary -- "WAL every ≤60s + base backups<br/>IRSA writer role" --> vpce
+  vpce --> s3
+  s3 -- "read-only HTTPS<br/>static key, this IP only" --> nat
+  nat --> replica
 ```
 
 There is no network path between the clouds, so there is no VPN. The replica's lag is
