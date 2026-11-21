@@ -216,7 +216,7 @@ by digest.
 ### Bootstrap order
 
 Nothing can run before the CNI, and on EKS Flux can't resolve `github.com` before
-CoreDNS. `k8s/bootstrap.sh` therefore:
+CoreDNS. `make bootstrap` (which runs `k8s/bootstrap.sh`) therefore:
 
 1. checks that the kube-context points at the cluster the stack built
 2. creates the `cluster-vars` ConfigMap from `tofu output`
@@ -234,8 +234,8 @@ the private half under `secrets/`, which is gitignored:
 ssh-keygen -t ed25519 -N '' -C flux -f secrets/flux-deploy-key
 gh repo deploy-key add secrets/flux-deploy-key.pub --title flux   # read-only by default
 
-k8s/bootstrap.sh aws poc-mcpg
-k8s/bootstrap.sh gcp "$(kubectl config get-contexts -o name | grep '^gke_')"
+make bootstrap CLOUD=aws CONTEXT=poc-mcpg
+make bootstrap CLOUD=gcp CONTEXT="$(kubectl config get-contexts -o name | grep '^gke_')"
 
 flux --context poc-mcpg get helmreleases -A
 cilium --context poc-mcpg status --wait

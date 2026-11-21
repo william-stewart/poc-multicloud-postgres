@@ -48,6 +48,14 @@ tofu-test: tofu-validate ## tofu test (mock providers) in every stack that has t
 	  if [ -d "$$s/tests" ]; then echo "==> test $$s"; tofu -chdir=$$s test -no-color; fi; \
 	done
 
+.PHONY: bootstrap
+bootstrap: ## Install Cilium (+ CoreDNS on EKS) and Flux on a cluster: CLOUD=aws|gcp CONTEXT=<kube-context>
+	@if [ -z "$(CLOUD)" ] || [ -z "$(CONTEXT)" ]; then \
+	  echo "usage: make bootstrap CLOUD=<aws|gcp> CONTEXT=<kube-context> [DEPLOY_KEY=secrets/flux-deploy-key]" >&2; \
+	  exit 2; \
+	fi
+	k8s/bootstrap.sh "$(CLOUD)" "$(CONTEXT)" $(if $(DEPLOY_KEY),"$(DEPLOY_KEY)")
+
 .PHONY: flux-manifests
 flux-manifests: ## Regenerate k8s/flux/gotk-components.yaml with the pinned flux CLI
 	flux install --export > k8s/flux/gotk-components.yaml
