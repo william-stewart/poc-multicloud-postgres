@@ -5,13 +5,24 @@
 #     bucket aws-archive, gcs-* stores gcs-archive;
 #   - no cloud service account annotations or projected cloud tokens;
 #   - local-path volumes, smaller Guaranteed-QoS resources, and preferred
-#     (not required) anti-affinity, since there is only one node.
+#     (not required) anti-affinity, since there is only one node;
+#   - less CPU for the Barman sidecar, so four instances fit on one node. Its
+#     memory stays what production runs, since memory is its likeliest limit.
 # Everything else (topology, archive_timeout, plugins, backups, bootstrap) is
 # what production runs. make validate renders these overlays, so a change in
 # k8s/data that breaks them fails there first.
 apiVersion: kustomize.config.k8s.io/v1alpha1
 kind: Component
 patches:
+  - target:
+      kind: ObjectStore
+    patch: |-
+      - op: replace
+        path: /spec/instanceSidecarConfiguration/resources/requests/cpu
+        value: 250m
+      - op: replace
+        path: /spec/instanceSidecarConfiguration/resources/limits/cpu
+        value: 250m
   - target:
       kind: ObjectStore
       name: aws-store
