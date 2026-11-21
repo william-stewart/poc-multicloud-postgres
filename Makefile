@@ -77,8 +77,12 @@ cilium-enis: ## List ENIs Cilium left in the EKS VPC after teardown; DELETE=1 re
 	scripts/cilium-enis.sh $(if $(DELETE),--delete)
 
 .PHONY: e2e
-e2e: ## End-to-end test on a local cluster (default Rancher Desktop): E2E_CONTEXT=<ctx> E2E_KEEP=1 to keep it
+e2e: ## End-to-end test on a local cluster (default Rancher Desktop): E2E_CONTEXT=<ctx> E2E_KEEP=1 E2E_MONITORING=1
 	test/e2e/run.sh
+
+.PHONY: e2e-grafana
+e2e-grafana: ## Open the end-to-end test's Grafana (E2E_MONITORING=1) on http://localhost:3000
+	kubectl --context "$${E2E_CONTEXT:-rancher-desktop}" -n monitoring port-forward svc/kube-prometheus-stack-grafana 3000:80
 
 .PHONY: e2e-clean
 e2e-clean: ## Remove what make e2e installed from the local cluster

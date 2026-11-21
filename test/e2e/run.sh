@@ -26,10 +26,16 @@
 #   E2E_CONTEXT  kube context to use (default rancher-desktop); it must point
 #                at a local API server, so this can never touch a cloud cluster
 #   E2E_KEEP=1   leave everything installed after the run, for inspection
+#   E2E_MONITORING=1
+#                also install Prometheus and Grafana from k8s/monitoring before
+#                the databases, so the dashboard records the whole run; open it
+#                with make e2e-grafana (with E2E_KEEP=1 it outlives the run)
 set -euo pipefail
 
 CONTEXT=${E2E_CONTEXT:-rancher-desktop}
 KEEP=${E2E_KEEP:-0}
+MONITORING=${E2E_MONITORING:-0}
+MONITORING_RELEASE=k8s/monitoring/kube-prometheus-stack/helmrelease.yaml
 NS=cnpg-db
 cd "$(git rev-parse --show-toplevel)"
 
@@ -54,20 +60,23 @@ preflight() {
   kc get nodes >/dev/null
   # Four PostgreSQL pods at once (pg-primary x2, pg-replica, pg-restore), each
   # Guaranteed 300m CPU and 512Mi with its sidecar, plus the operators.
+  # Prometheus and Grafana add about 1Gi.
   kc get nodes -o jsonpath='{range .items[*]}{.status.allocatable.cpu} {.status.allocatable.memory}{"\n"}{end}' |
     python3 -c '
 import sys
+monitoring = sys.argv[1] == "1"
 cpu = mem = 0.0
 for line in sys.stdin:
     c, m = line.split()
     cpu += float(c[:-1]) / 1000 if c.endswith("m") else float(c)
     units = {"Ki": 2**10, "Mi": 2**20, "Gi": 2**30}
     mem += float(m[:-2]) * units[m[-2:]] / 2**30 if m[-2:] in units else float(m) / 2**30
-if cpu < 3 or mem < 6:
-    print(f"warning: the cluster has {cpu:.1f} CPUs and {mem:.1f}Gi allocatable; 4 CPUs and 8Gi"
+low, want = (7, 10) if monitoring else (6, 8)
+if cpu < 3 or mem < low:
+    print(f"warning: the cluster has {cpu:.1f} CPUs and {mem:.1f}Gi allocatable; 4 CPUs and {want}Gi"
           " (Rancher Desktop: Preferences > Virtual Machine) avoid pods pending for resources",
           file=sys.stderr)
-'
+' "$MONITORING"
 }
 
 # --- Results -----------------------------------------------------------------
@@ -115,7 +124,8 @@ write_evidence() {
     echo "- Result: **$status** ($failures failed checks)"
     echo "- Commit: $(git rev-parse --short HEAD)$(git diff --quiet HEAD -- k8s test/e2e || echo ' (with uncommitted changes)')"
     echo "- Kubernetes: $(kc version -o json 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["serverVersion"]["gitVersion"])' 2>/dev/null || echo unknown), $(kc get nodes --no-headers 2>/dev/null | wc -l | tr -d ' ') node(s), context $CONTEXT"
-    echo "- Charts: cert-manager $(chart_version cert-manager), cloudnative-pg $(chart_version cloudnative-pg), plugin-barman-cloud $(chart_version plugin-barman-cloud)"
+    echo "- Charts: cert-manager $(chart_version cert-manager), cloudnative-pg $(chart_version cloudnative-pg), plugin-barman-cloud $(chart_version plugin-barman-cloud)$(
+      if [[ $MONITORING == 1 ]]; then echo ", kube-prometheus-stack $(release_version "$MONITORING_RELEASE")"; fi)"
     echo "- PostgreSQL: $(sed -n 's/^ *value: *//p' k8s/data/components/postgres-image/kustomization.yaml)"
     echo
     echo "| Scenario | Check | Result | Measurement |"
@@ -172,13 +182,18 @@ finish() {
 
 # --- Install and remove --------------------------------------------------------
 
-chart_version() {
-  sed -n 's/^ *version: *"\{0,1\}\([^"]*\)"\{0,1\} *$/\1/p' "k8s/platform/base/$1/helmrelease.yaml" | head -1
+release_version() { # helmrelease.yaml
+  sed -n 's/^ *version: *"\{0,1\}\([^"]*\)"\{0,1\} *$/\1/p' "$1" | head -1
 }
+chart_version() { release_version "k8s/platform/base/$1/helmrelease.yaml"; }
 
 clean() {
   log "Removing what the end-to-end test installed"
   kc delete namespace "$NS" s3-emulator --ignore-not-found --wait=true --timeout=5m || true
+  # Whether or not this run installed it. The Prometheus Operator's CRDs stay:
+  # Helm never deletes CRDs, and another install may be using them.
+  hc uninstall kube-prometheus-stack --namespace monitoring --ignore-not-found --wait || true
+  kc delete namespace monitoring --ignore-not-found --wait=true --timeout=5m || true
   hc uninstall plugin-barman-cloud --namespace cnpg-system --ignore-not-found --wait || true
   hc uninstall cloudnative-pg --namespace cnpg-system --ignore-not-found --wait || true
   hc uninstall cert-manager --namespace cert-manager --ignore-not-found --wait || true
@@ -206,6 +221,25 @@ install_platform() {
   hc upgrade --install plugin-barman-cloud plugin-barman-cloud --repo https://cloudnative-pg.github.io/charts \
     --version "$(chart_version plugin-barman-cloud)" --namespace cnpg-system \
     -f k8s/platform/base/plugin-barman-cloud/values.yaml --wait --timeout 10m
+}
+
+# Prometheus and Grafana, with the version and values in k8s/monitoring, and
+# the PodMonitor and dashboard from k8s/monitoring/config.
+install_monitoring() {
+  local values=k8s/monitoring/kube-prometheus-stack/values.yaml version
+  version=$(release_version "$MONITORING_RELEASE")
+  # shellcheck disable=SC2016  # a literal ${, not an expansion
+  if grep -qF '${' "$values"; then
+    echo "$values uses variables; teach run.sh to fill them" >&2
+    exit 1
+  fi
+  log "Prometheus and Grafana (kube-prometheus-stack $version)"
+  hc upgrade --install kube-prometheus-stack kube-prometheus-stack \
+    --repo https://prometheus-community.github.io/helm-charts \
+    --version "$version" --namespace monitoring --create-namespace \
+    -f "$values" --wait --timeout 10m
+  kc apply -k k8s/monitoring/config >/dev/null
+  echo "Dashboard: run make e2e-grafana in another terminal, then open http://localhost:3000"
 }
 
 deploy_object_store() {
@@ -527,6 +561,7 @@ if kc get namespace "$NS" >/dev/null 2>&1; then
   clean
 fi
 install_platform
+if [[ $MONITORING == 1 ]]; then install_monitoring; fi
 deploy_object_store
 deploy_databases
 test_replication

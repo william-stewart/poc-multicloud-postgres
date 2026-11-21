@@ -269,6 +269,41 @@ can't touch a cloud cluster. It needs `kubectl`, `helm`, `kustomize`, `python3` 
 `openssl`. Give Rancher Desktop's VM 4 CPUs and 8 GB (Preferences > Virtual Machine);
 with less, the four PostgreSQL pods may wait for resources.
 
+### Watching a run in Grafana
+
+`E2E_MONITORING=1` also installs Prometheus and Grafana (`k8s/monitoring`) before the
+databases, so the dashboard covers the whole run:
+
+```sh
+E2E_MONITORING=1 E2E_KEEP=1 make e2e   # in one terminal; keep it so Grafana outlives the run
+make e2e-grafana                       # in another, once the run prints "Dashboard:"
+open http://localhost:3000/d/postgres-dr
+```
+
+Grafana opens read-only without a login. The admin password is in the
+`monitoring/kube-prometheus-stack-grafana` Secret. Give the VM about 10 GB with
+monitoring on.
+
+The dashboard, *PostgreSQL across clouds: recovery point and failover*, uses only
+metrics CloudNativePG and the Barman Cloud plugin already serve on each instance's
+port 9187. One PodMonitor scrapes them every 10s. Each scenario has its own shape:
+
+| Panel | What it shows | Where the scenarios show up |
+| --- | --- | --- |
+| Role of each Cluster | Primary, replica or fenced, per Cluster | 5: the roles swap and swap back. 6: `pg-replica` turns primary, `pg-primary` fenced |
+| PostgreSQL up, per instance | Whether each pod's PostgreSQL answers | 3: the killed pod drops out and comes back |
+| Seconds since the last WAL segment was archived | Per Cluster, against `archive_timeout` (60s) | 4: the primary's line climbs past 60s until the store is back |
+| WAL segments each archive is behind the newest | The replica's line is the cross-cloud lag | 1 and 4: it rises while the replica waits, then drops to 0 |
+| WAL segments waiting to be archived | `.ready` files piling up on the WAL volume | 4: they pile up during the outage, then drain |
+| Failed archive attempts | Per minute | 4 |
+| Age of the last base backup, recovery window | Per archive, from the Barman Cloud plugin | 0: both archives get their first backup |
+| Commits per second | On each Cluster's writable instance | Each scenario's writes |
+
+In the end-to-end test both archives are the same local S3 server and replication
+crosses no network, so the lag is shorter than on the clouds. The dashboard isn't
+deployed to EKS and GKE yet. That needs a Flux Kustomization for `k8s/monitoring`,
+and an allow rule in `k8s/policies` from the `monitoring` namespace to port 9187.
+
 ## Verify
 
 ```sh
@@ -617,6 +652,7 @@ stack's state file.
 | `k8s/platform` | Cilium, CoreDNS, cert-manager, CloudNativePG, Barman plugin, EBS CSI |
 | `k8s/data` | The PostgreSQL clusters, object stores and backups |
 | `k8s/policies` | Default deny and Cilium allow rules for `cnpg-db` |
+| `k8s/monitoring` | Prometheus, Grafana, the PodMonitor and the PostgreSQL dashboard (used by `make e2e` so far) |
 | `k8s/*.sh` | `bootstrap.sh`, `data-vars.sh`, `app-credentials.sh` (run through `make`) |
 | `test/e2e` | The local end-to-end test (`make e2e`) and its overlays of `k8s/data` |
 | `evidence/e2e` | Results of end-to-end runs |
@@ -659,7 +695,8 @@ token and no cloud credentials.
   unplanned failover (rebuilding from the other archive) isn't in `make e2e` yet.
 - A fence that doesn't depend on the old primary's cluster reconciling first, and
   client routing across clouds (DNS that follows the primary).
-- Alerts on archive failures and replica lag; regional, multi-AZ clusters; one NAT
-  gateway per AZ.
+- Prometheus and the dashboard on EKS and GKE (see
+  [Watching a run in Grafana](#watching-a-run-in-grafana)), alerts on archive failures
+  and replica lag; regional, multi-AZ clusters; one NAT gateway per AZ.
 - Cluster-wide default deny (`cnpg-system`, `kube-system`) and security-group-level
   egress filtering on the EKS nodes.
