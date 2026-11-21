@@ -62,6 +62,7 @@ case $cloud in
       echo "EKS_API_HOST=${endpoint#https://}"
       echo "EKS_DNS_SERVICE_IP=${kubernetes_ip%.*}.10"
       echo "CILIUM_OPERATOR_ROLE_ARN=$(out cilium_operator_role_arn)"
+      echo "EBS_CSI_ROLE_ARN=$(out ebs_csi_role_arn)"
     } >"$vars"
     ;;
   gcp)

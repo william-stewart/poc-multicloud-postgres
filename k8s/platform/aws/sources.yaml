@@ -7,3 +7,12 @@ metadata:
 spec:
   interval: 24h
   url: https://coredns.github.io/helm
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: aws-ebs-csi-driver
+  namespace: flux-system
+spec:
+  interval: 24h
+  url: https://kubernetes-sigs.github.io/aws-ebs-csi-driver

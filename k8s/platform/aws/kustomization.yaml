@@ -1,10 +1,11 @@
-# EKS platform: the shared base plus CoreDNS.
+# EKS platform: the shared base plus CoreDNS and the EBS CSI driver.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - ../base
   - sources.yaml
   - coredns/helmrelease.yaml
+  - aws-ebs-csi-driver/helmrelease.yaml
 
 generatorOptions:
   disableNameSuffixHash: true
@@ -19,3 +20,7 @@ configMapGenerator:
     namespace: kube-system
     files:
       - values.yaml=coredns/values.yaml
+  - name: aws-ebs-csi-driver-values
+    namespace: kube-system
+    files:
+      - values.yaml=aws-ebs-csi-driver/values.yaml

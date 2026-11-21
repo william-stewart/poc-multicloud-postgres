@@ -1,4 +1,5 @@
-# In-cluster platform: Cilium with Hubble, plus CoreDNS on EKS.
+# In-cluster platform: Cilium, cert-manager, CloudNativePG and its Barman
+# Cloud plugin, plus CoreDNS and the EBS CSI driver on EKS.
 # Account-specific values (role ARNs, the API host) are not in git: Flux
 # substitutes ${VARS} from the cluster-vars ConfigMap, which bootstrap.sh
 # creates from `tofu output`. See cluster-vars.example.env for the list.
