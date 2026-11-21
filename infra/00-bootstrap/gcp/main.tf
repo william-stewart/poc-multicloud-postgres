@@ -1,3 +1,12 @@
+module "settings" {
+  source = "../../modules/settings"
+}
+
+locals {
+  name   = module.settings.name_prefix
+  region = module.settings.regions.gcp
+}
+
 resource "google_project_service" "this" {
   for_each = toset(["cloudkms.googleapis.com", "storage.googleapis.com"])
 
@@ -10,14 +19,14 @@ resource "google_project_service" "this" {
 # Customer-managed key so state encryption can be audited and access to it
 # revoked independently of bucket IAM. Key rings cannot be deleted in GCP.
 resource "google_kms_key_ring" "state" {
-  name     = "${var.name_prefix}-tfstate"
-  location = var.region
+  name     = "${local.name}-tfstate"
+  location = local.region
 
   depends_on = [google_project_service.this]
 }
 
 resource "google_kms_crypto_key" "state" {
-  name            = "${var.name_prefix}-tfstate"
+  name            = "${local.name}-tfstate"
   key_ring        = google_kms_key_ring.state.id
   purpose         = "ENCRYPT_DECRYPT"
   rotation_period = "7776000s" # 90 days
@@ -32,14 +41,14 @@ resource "google_kms_crypto_key" "state" {
 # a nightly teardown of the cluster stack would leave the names taken and break
 # the next apply. The cluster stack grants the GKE service agent access to it.
 resource "google_kms_key_ring" "gke" {
-  name     = "${var.name_prefix}-gke"
-  location = var.region
+  name     = "${local.name}-gke"
+  location = local.region
 
   depends_on = [google_project_service.this]
 }
 
 resource "google_kms_crypto_key" "gke_secrets" {
-  name            = "${var.name_prefix}-gke-secrets"
+  name            = "${local.name}-gke-secrets"
   key_ring        = google_kms_key_ring.gke.id
   purpose         = "ENCRYPT_DECRYPT"
   rotation_period = "7776000s" # 90 days
@@ -62,8 +71,8 @@ resource "google_kms_crypto_key_iam_member" "gcs_uses_state_key" {
 
 resource "google_storage_bucket" "state" {
   #checkov:skip=CKV_GCP_62:Usage logs need a second bucket; Cloud Audit Logs cover access for this PoC.
-  name          = "${var.project_id}-${var.name_prefix}-tfstate"
-  location      = upper(var.region)
+  name          = "${var.project_id}-${local.name}-tfstate"
+  location      = upper(local.region)
   storage_class = "STANDARD"
   force_destroy = false
 

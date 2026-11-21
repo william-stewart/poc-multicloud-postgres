@@ -61,12 +61,16 @@ run "bucket_policy_requires_tls" {
   }
 }
 
-run "rejects_invalid_prefix" {
+# These resources hold the state of every other AWS stack. Their names must
+# never change, or OpenTofu would plan to replace them.
+run "names_are_stable" {
   command = plan
 
-  variables {
-    name_prefix = "Bad_Prefix"
+  assert {
+    condition = (
+      aws_s3_bucket.state.bucket == "poc-mcpg-tfstate-123456789012-us-east-1" &&
+      aws_kms_alias.state.name == "alias/poc-mcpg-tfstate"
+    )
+    error_message = "State bucket or key alias name changed; that would replace live resources."
   }
-
-  expect_failures = [var.name_prefix]
 }

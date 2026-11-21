@@ -14,13 +14,9 @@ terraform {
 }
 
 provider "aws" {
-  region = var.aws_region
+  region = module.settings.regions.aws
 
   default_tags {
-    tags = {
-      Project   = var.name_prefix
-      Stack     = "00-bootstrap"
-      ManagedBy = "opentofu"
-    }
+    tags = merge(module.settings.labels, { stack = "00-bootstrap-aws" })
   }
 }

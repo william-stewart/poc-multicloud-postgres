@@ -7,6 +7,11 @@ run "default_address_plan_is_valid" {
   }
 
   assert {
+    condition     = can(regex("^[a-z][a-z0-9-]{2,15}$", output.name_prefix))
+    error_message = "name_prefix must be 3-16 characters: lowercase letters, digits and hyphens, starting with a letter."
+  }
+
+  assert {
     condition     = output.regions.aws == "us-east-1" && output.regions.gcp == "us-central1"
     error_message = "Unexpected regions."
   }

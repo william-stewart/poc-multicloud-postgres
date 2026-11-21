@@ -1,15 +1,21 @@
+module "settings" {
+  source = "../../modules/settings"
+}
+
 data "aws_caller_identity" "current" {}
 data "aws_partition" "current" {}
 
 locals {
+  name        = module.settings.name_prefix
+  region      = module.settings.regions.aws
   account_id  = data.aws_caller_identity.current.account_id
-  bucket_name = "${var.name_prefix}-tfstate-${local.account_id}-${var.aws_region}"
+  bucket_name = "${local.name}-tfstate-${local.account_id}-${local.region}"
 }
 
 # Customer-managed key so state encryption can be audited and access to it
 # revoked independently of S3 permissions.
 resource "aws_kms_key" "state" {
-  description             = "Encrypts OpenTofu state for ${var.name_prefix}"
+  description             = "Encrypts OpenTofu state for ${local.name}"
   enable_key_rotation     = true
   deletion_window_in_days = 30
 
@@ -30,7 +36,7 @@ resource "aws_kms_key" "state" {
 }
 
 resource "aws_kms_alias" "state" {
-  name          = "alias/${var.name_prefix}-tfstate"
+  name          = "alias/${local.name}-tfstate"
   target_key_id = aws_kms_key.state.key_id
 }
 

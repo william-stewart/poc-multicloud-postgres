@@ -14,11 +14,7 @@ terraform {
 
 provider "google" {
   project = var.project_id
-  region  = var.region
+  region  = module.settings.regions.gcp
 
-  default_labels = {
-    project    = var.name_prefix
-    stack      = "00-bootstrap"
-    managed-by = "opentofu"
-  }
+  default_labels = merge(module.settings.labels, { stack = "00-bootstrap-gcp" })
 }
