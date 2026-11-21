@@ -6,6 +6,10 @@
 #
 # Usage, after `tofu apply` in infra/30-data/aws and `make bootstrap`:
 #   k8s/data-vars.sh <aws|gcp> <kube-context>
+#
+# On GCP it refuses to run until the replica can actually bootstrap: the
+# reader credentials must be in the cluster (make replica-credentials) and the
+# primary's first base backup must be in S3.
 set -euo pipefail
 
 usage() {
@@ -36,8 +40,19 @@ case $cloud in
     } >"$vars"
     ;;
   gcp)
-    echo "The GCP data layer (the replica) comes in the next phase." >&2
-    exit 1
+    require_tools aws
+    bucket=$(tofu -chdir=infra/30-data/aws output -raw wal_bucket)
+    if ! kc --namespace cnpg-db get secret aws-s3-reader >/dev/null 2>&1; then
+      echo "cnpg-db/aws-s3-reader is missing; run make replica-credentials first" >&2
+      exit 1
+    fi
+    # The replica bootstraps from a base backup; without one it fails.
+    if [[ -z $(aws s3api list-objects-v2 --bucket "$bucket" --prefix pg-primary/base/ \
+      --max-items 1 --query 'Contents[].Key' --output text | grep -v '^None$' || true) ]]; then
+      echo "no base backup under s3://$bucket/pg-primary/base/ yet; wait for the primary's first backup" >&2
+      exit 1
+    fi
+    echo "WAL_BUCKET=$bucket" >"$vars"
     ;;
 esac
 
