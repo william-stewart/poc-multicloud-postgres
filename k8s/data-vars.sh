@@ -6,12 +6,13 @@
 # pg-primary's GCS credential configuration (no key in it) in the
 # cnpg-db/gcs-reader Secret.
 #
-# Usage, after `tofu apply` in both infra/30-data stacks and `make bootstrap`:
+# Usage, after `tofu apply` in both infra/30-data stacks, `make bootstrap`
+# and `make app-credentials`:
 #   k8s/data-vars.sh <aws|gcp> <kube-context>
 #
-# On GCP it refuses to run until the replica can actually bootstrap: the
-# reader credentials must be in the cluster (make replica-credentials) and the
-# primary's first base backup must be in S3.
+# It refuses to run until the database can start: the app owner credentials
+# must be in the cluster. On GCP the S3 reader credentials must be too (make
+# replica-credentials), and the primary's first base backup must be in S3.
 set -euo pipefail
 
 usage() {
@@ -29,6 +30,11 @@ source k8s/lib.sh
 
 require_tools tofu kubectl
 check_cluster_context "$cloud"
+
+if ! kc --namespace cnpg-db get secret app-owner >/dev/null 2>&1; then
+  echo "cnpg-db/app-owner is missing; run make app-credentials first" >&2
+  exit 1
+fi
 
 workdir=$(mktemp -d)
 trap 'rm -rf "$workdir"' EXIT

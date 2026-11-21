@@ -1,0 +1,25 @@
+# Rule 7: applications in the app namespace may connect to their cluster's
+# current primary only. CloudNativePG labels it cnpg.io/instanceRole: primary
+# and moves the label on failover; on a replica cluster the label marks the
+# designated primary, which is read-only until the cluster is promoted. So
+# the same rule serves pg-primary on EKS and pg-replica on GKE, and clients
+# on either side reach the database through their local <cluster>-rw Service.
+# Nothing else can reach PostgreSQL.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-app-to-primary
+  namespace: cnpg-db
+spec:
+  endpointSelector:
+    matchLabels:
+      cnpg.io/podRole: instance
+      cnpg.io/instanceRole: primary
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: app
+      toPorts:
+        - ports:
+            - port: "5432"
+              protocol: TCP

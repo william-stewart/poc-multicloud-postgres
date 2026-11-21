@@ -26,6 +26,10 @@ spec:
     initdb:
       database: app
       owner: app
+      # The same app owner credentials on every member (make app-credentials),
+      # as CloudNativePG requires for a distributed topology.
+      secret:
+        name: app-owner
   enableSuperuserAccess: false
 
   postgresql:

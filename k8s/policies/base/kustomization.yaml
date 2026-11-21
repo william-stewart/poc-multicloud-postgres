@@ -1,4 +1,5 @@
-# The database namespace and its network policies, shared by both clusters.
+# The database and app namespaces and their network policies, shared by both
+# clusters, so either side can serve applications once it is the primary.
 # Default deny for every pod in cnpg-db, then Cilium rules that open exactly the
 # flows the databases need. Each cloud's overlay adds its own rules.
 apiVersion: kustomize.config.k8s.io/v1beta1
@@ -10,3 +11,5 @@ resources:
   - allow-kube-apiserver.yaml
   - allow-operator-and-probes.yaml
   - allow-s3.yaml
+  - app-namespace.yaml
+  - allow-app-to-primary.yaml

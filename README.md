@@ -23,6 +23,7 @@ flowchart LR
 
   subgraph GCP["GCP · us-central1 · nodes 10.20.0.0/20"]
     subgraph GKE["GKE 1.36 · COS · Cilium only"]
+      app2["namespace app"]
       replica[("pg-replica<br/>1 instance · cnpg-db<br/>replays WAL from S3<br/>default deny + allow rules")]
     end
     nat["Cloud NAT<br/>reserved IP"]
@@ -35,6 +36,7 @@ flowchart LR
   s3 -- "read-only HTTPS<br/>static key, this IP only" --> nat
   nat --> replica
   replica -- "every replayed WAL + base backups<br/>Workload Identity, no key" --> gcs
+  app2 -- "5432 only<br/>read-only until promoted" --> replica
   gcs -. "read-only, after a switchover<br/>Workload Identity Federation, no key" .-> primary
 ```
 
@@ -53,7 +55,7 @@ layer below it by name, so the order matters in both directions.
 | 3 | Clusters | `tofu apply` | 12–15 min (EKS) |
 | 4 | Platform: Cilium, CoreDNS, Flux, then Flux installs the rest | `make bootstrap` | 5–8 min |
 | 5 | Archives: S3 and GCS buckets, IAM, Workload Identity Federation | `tofu apply` | 2–3 min |
-| 6 | Credentials: the S3 reader key on GKE | `make replica-credentials` | 1 min |
+| 6 | Credentials: the app owner on both clusters, the S3 reader key on GKE | `make app-credentials`, `make replica-credentials` | 1 min |
 | 7 | Primary on EKS: network policies, then the database | `make data-vars` | 5 min + first backup |
 | 8 | Replica on GKE: network policies, then the database | `make data-vars` | 5 min + first backup |
 
@@ -176,8 +178,16 @@ archives: each one reads the other's to change roles.
 ### 6. Credentials
 
 ```sh
+make app-credentials EKS="$EKS" GKE="$GKE"
 make replica-credentials CONTEXT="$GKE"
 ```
+
+`make app-credentials` stores the same `app` owner credentials on both clusters, as
+CloudNativePG requires for a distributed topology: `cnpg-db/app-owner`, which both
+databases bootstrap with, and `app/postgres`, which clients in the `app` namespace
+connect with (host `pg-primary-rw` on EKS, `pg-replica-rw` on GKE). The password is
+generated once and goes straight into the Kubernetes API. Because it runs while both
+clusters are up, GKE already holds the credentials if AWS is lost.
 
 `make replica-credentials` creates the read-only IAM user's access key and stores it,
 with the bucket region, in the `cnpg-db/aws-s3-reader` Secret. The key goes straight
@@ -193,7 +203,8 @@ kubectl --context "$EKS" -n cnpg-db get cluster,backup -w
 
 `make data-vars` stores the bucket names, region and writer role in the
 `flux-system/data-vars` ConfigMap, and the GCS credential configuration (a token file
-and a provider name, no key) in the `cnpg-db/gcs-reader` Secret. Flux applies nothing in `k8s/policies` or `k8s/data`
+and a provider name, no key) in the `cnpg-db/gcs-reader` Secret. It refuses to run
+until `make app-credentials` has. Flux applies nothing in `k8s/policies` or `k8s/data`
 until the ConfigMap exists, so the database never starts with empty values. Flux then
 applies the network policies first and the database only once they are ready, so no
 database pod ever runs without default deny. Wait for `pg-primary` to be healthy and
@@ -251,9 +262,12 @@ kubectl --context "$EKS" run nettest --rm -it --restart=Never -n default --image
   pg_isready -h pg-primary-rw.cnpg-db -t 5
 # No internet from the database (fails):
 kubectl --context "$EKS" -n cnpg-db exec pg-primary-1 -c postgres -- timeout 5 bash -c '</dev/tcp/example.com/443'
-# The app namespace can reach the primary (accepting connections):
+# The app namespace can reach the primary (accepting connections), on both sides;
+# on GKE it is read-only until pg-replica is promoted:
 kubectl --context "$EKS" run nettest --rm -it --restart=Never -n app --image=postgres:18 -- \
   pg_isready -h pg-primary-rw.cnpg-db -t 5
+kubectl --context "$GKE" run nettest --rm -it --restart=Never -n app --image=postgres:18 -- \
+  pg_isready -h pg-replica-rw.cnpg-db -t 5
 ```
 
 ## Switchover, failover and failback
@@ -289,6 +303,9 @@ No data is lost. Writes are refused from step 1 until step 2 completes.
    location. `pg-replica` replays up to that point, then promotes and starts a new
    timeline in GCS. `pg-primary` follows it from GCS.
 
+3. **Move clients** to the `app` namespace on GKE. They connect with the `app/postgres`
+   Secret already there.
+
 Switching back is the same with the roles reversed. The validator makes you remove the
 old `promotionToken` in the commit that demotes `pg-replica` again.
 
@@ -299,6 +316,8 @@ old `promotionToken` in the commit that demotes `pg-replica` again.
      promotes at once, at the last WAL it replayed.
    - `k8s/data/aws/cluster.yaml`: `replica.primary: pg-replica`, and the annotation
      `cnpg.io/fencedInstances: '["*"]'` on `pg-primary`.
+
+2. **Move clients** to the `app` namespace on GKE, as above.
 
 **Data lost:** what `pg-primary` wrote after the last WAL `pg-replica` fetched. That's
 up to `archive_timeout` (60s) plus however far the replica was behind.
@@ -344,6 +363,13 @@ aws s3 mv --recursive "s3://$bucket/pg-primary/" "s3://$bucket/pg-primary-diverg
 
 Losing GCP while AWS is the primary is the mirror image: rebuild `pg-replica` from S3,
 after setting `gs://<bucket>/pg-replica/` aside.
+
+**Client cutover stops at the cluster boundary.** Applications in the `app` namespace
+on either cluster reach their local primary through the `<cluster>-rw` Service.
+Routing clients outside the clusters (a DNS name that follows the primary, or global
+traffic management) is out of scope for a database PoC. It would take a DNS record
+switched in the same commit (for example with external-dns), and each `-rw` Service
+exposed through an internal load balancer on the clients' network.
 
 ## Tear down
 
@@ -413,7 +439,7 @@ What still works when one cloud is lost:
 
 | Lost | Data | Still works | What's lost or degraded |
 | --- | --- | --- | --- |
-| AWS `us-east-1` | GCS holds `pg-replica`'s base backups and every WAL segment it replayed | Fail over to `pg-replica` (see [Unplanned failover](#unplanned-failover-aws-is-lost)); it keeps archiving to GCS and taking backups, so it has PITR from the first GCS base backup on. If its volume is also lost, a new cluster can be restored from GCS | Writes since the last WAL the replica replayed: up to `archive_timeout` (60s), plus anything S3 held that the replica hadn't fetched yet. Applications on EKS |
+| AWS `us-east-1` | GCS holds `pg-replica`'s base backups and every WAL segment it replayed | Fail over to `pg-replica` (see [Unplanned failover](#unplanned-failover-aws-is-lost)); it keeps archiving to GCS and taking backups, so it has PITR from the first GCS base backup on, and serves clients in GKE's `app` namespace. If its volume is also lost, a new cluster can be restored from GCS | Writes since the last WAL the replica replayed: up to `archive_timeout` (60s), plus anything S3 held that the replica hadn't fetched yet. Applications on EKS |
 | GCP `us-central1` | S3 holds `pg-primary`'s base backups and WAL | The primary, its archive and its backups are unaffected | The DR copy and the GCS backups. Rebuild the replica from S3 (step 8) once GCP is back |
 | Only one Kubernetes cluster | Both buckets | The other side as above; the lost side is rebuilt from its own bucket or the other cloud's | |
 
@@ -452,7 +478,7 @@ depends on `policies`), so no database pod ever runs unprotected:
 | 4 | Both | Instance ↔ instance of the same cluster | 5432, 8000 | Both |
 | 5 | Egress | Database pods → the bucket's regional S3 endpoints, by name | 443 | Both |
 | 6 | Egress | Database pods → STS (IRSA) | 443 | EKS |
-| 7 | Ingress | Namespace `app` → the current primary only | 5432 | EKS |
+| 7 | Ingress | Namespace `app` → the cluster's current (or designated) primary only | 5432 | Both |
 | 8 | Egress | Database pods → `storage.googleapis.com` | 443 | GKE |
 | 9 | Egress | Database pods → GKE metadata server (Workload Identity tokens) | 80 | GKE |
 | 10 | Egress | Database pods → `sts.googleapis.com`, `storage.googleapis.com` | 443 | EKS |
@@ -489,7 +515,7 @@ stack's state file.
 | `k8s/platform` | Cilium, CoreDNS, cert-manager, CloudNativePG, Barman plugin, EBS CSI |
 | `k8s/data` | The PostgreSQL clusters, object stores and backups |
 | `k8s/policies` | Default deny and Cilium allow rules for `cnpg-db` |
-| `k8s/*.sh` | `bootstrap.sh`, `data-vars.sh`, `replica-credentials.sh` (run through `make`) |
+| `k8s/*.sh` | `bootstrap.sh`, `data-vars.sh`, `app-credentials.sh`, `replica-credentials.sh` (run through `make`) |
 
 ## Local validation
 
@@ -527,7 +553,7 @@ token and no cloud credentials.
 - Run the switchover, failover and failback drills on live clusters, and record RTO
   and RPO. None of them has been run yet.
 - A fence that doesn't depend on the old primary's cluster reconciling first, and
-  client cutover: applications on GKE and routing across clouds.
+  client routing across clouds (DNS that follows the primary).
 - Alerts on archive failures and replica lag; regional, multi-AZ clusters; one NAT
   gateway per AZ.
 - Cluster-wide default deny (`cnpg-system`, `kube-system`) and security-group-level

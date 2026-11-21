@@ -1,8 +1,8 @@
 # Primary PostgreSQL cluster on EKS, archiving WAL and base backups to S3,
 # and able to read pg-replica's GCS archive. ${VARS} come from the
 # flux-system/data-vars ConfigMap (make data-vars), filled from `tofu output`
-# in infra/30-data/aws and infra/30-data/gcp. The gcs-reader Secret
-# comes from make data-vars; it is not in git.
+# in infra/30-data/aws and infra/30-data/gcp. The gcs-reader and app-owner
+# Secrets come from make data-vars and make app-credentials; neither is in git.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 # The cnpg-db namespace comes from the policies layer, applied first.

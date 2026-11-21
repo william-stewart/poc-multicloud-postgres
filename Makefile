@@ -64,6 +64,14 @@ data-vars: ## Store infra/30-data outputs for Flux's data layer: CLOUD=aws|gcp C
 	fi
 	k8s/data-vars.sh "$(CLOUD)" "$(CONTEXT)"
 
+.PHONY: app-credentials
+app-credentials: ## Store the same app owner credentials on both clusters: EKS=<eks-context> GKE=<gke-context>
+	@if [ -z "$(EKS)" ] || [ -z "$(GKE)" ]; then \
+	  echo "usage: make app-credentials EKS=<eks-kube-context> GKE=<gke-kube-context>" >&2; \
+	  exit 2; \
+	fi
+	k8s/app-credentials.sh "$(EKS)" "$(GKE)"
+
 .PHONY: replica-credentials
 replica-credentials: ## Create or rotate the GKE replica's read-only S3 key, stored only in the cluster: CONTEXT=<gke-context>
 	@if [ -z "$(CONTEXT)" ]; then \
