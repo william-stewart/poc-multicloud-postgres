@@ -52,6 +52,25 @@ run "gke_secrets_key_is_long_lived" {
   }
 }
 
+# These resources hold the state of every GCP stack and the GKE Secrets key;
+# Cloud KMS names can never be reused. Their names must never change.
+run "names_are_stable" {
+  command = plan
+
+  assert {
+    condition = (
+      google_storage_bucket.state.name == "poc-test-project-poc-mcpg-tfstate" &&
+      google_storage_bucket.state.location == "US-CENTRAL1" &&
+      google_kms_key_ring.state.name == "poc-mcpg-tfstate" &&
+      google_kms_crypto_key.state.name == "poc-mcpg-tfstate" &&
+      google_kms_key_ring.gke.name == "poc-mcpg-gke" &&
+      google_kms_crypto_key.gke_secrets.name == "poc-mcpg-gke-secrets" &&
+      google_kms_key_ring.state.location == "us-central1"
+    )
+    error_message = "A state bucket or KMS name or location changed; that would replace live resources."
+  }
+}
+
 run "rejects_invalid_project_id" {
   command = plan
 

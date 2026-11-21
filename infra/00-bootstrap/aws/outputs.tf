@@ -12,7 +12,7 @@ output "backend_config" {
   description = "Values for `tofu init -backend-config=...` in the AWS stacks (add a per-stack key)."
   value = {
     bucket       = aws_s3_bucket.state.bucket
-    region       = var.aws_region
+    region       = local.region
     encrypt      = true
     kms_key_id   = aws_kms_key.state.arn
     use_lockfile = true
