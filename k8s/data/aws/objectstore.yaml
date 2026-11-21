@@ -7,6 +7,16 @@ metadata:
 spec:
   # Barman deletes base backups (and the WAL they need) older than this.
   retentionPolicy: "7d"
+  # The plugin's sidecar in each instance pod. Requests equal limits, like the
+  # postgres container's, or the whole pod drops out of Guaranteed QoS.
+  instanceSidecarConfiguration:
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 100m
+        memory: 128Mi
   configuration:
     destinationPath: s3://${WAL_BUCKET}/
     s3Credentials:
