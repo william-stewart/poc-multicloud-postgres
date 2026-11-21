@@ -14,7 +14,7 @@ $(shell mkdir -p "$(TF_PLUGIN_CACHE_DIR)")
 
 .PHONY: help
 help: ## List targets
-	@grep -hE '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-16s %s\n", $$1, $$2}'
+	@grep -hE '^[a-zA-Z0-9_-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-16s %s\n", $$1, $$2}'
 
 .PHONY: tools
 tools: ## Check that every required tool is installed
