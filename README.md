@@ -11,6 +11,8 @@ and Flux reconciles everything inside them from this repo.
 
 ```mermaid
 flowchart TB
+  git{{"GitHub: this repo<br/>desired state, including which side is the primary"}}
+
   subgraph AWS["AWS · us-east-1"]
     subgraph EKS["EKS 1.36 · Bottlerocket · Cilium"]
       app["namespace app"]
@@ -29,18 +31,30 @@ flowchart TB
     gcs[\"GCS bucket · pg-replica/<br/>base backups + WAL<br/>versioned · KMS-encrypted (CMEK)"/]
   end
 
+  git ~~~ AWS
+  EKS -- "Flux pulls" --> git
+  GKE -- "Flux pulls" --> git
   app -- "5432 only" --> primary
-  primary -- "WAL every ≤60s + base backups<br/>IRSA writer role" --> vpce
+  primary -- "writes WAL every ≤60s + base backups<br/>IRSA writer role" --> vpce
   vpce --> s3
-  s3 -- "read-only HTTPS, this IP only<br/>role via GKE's OIDC issuer" --> nat
-  nat --> replica
-  replica -- "every replayed WAL + base backups<br/>Workload Identity" --> gcs
+  replica -- "reads WAL<br/>role via GKE's OIDC issuer" --> nat
+  nat -- "read-only HTTPS, this IP only" --> s3
+  replica -- "writes every replayed WAL + base backups<br/>Workload Identity" --> gcs
   app2 -- "5432 only<br/>read-only until promoted" --> replica
-  gcs -. "read-only, after a switchover<br/>Workload Identity Federation" .-> primary
+  primary -. "reads WAL, after a switchover<br/>Workload Identity Federation" .-> gcs
 ```
 
-In this scenario we are replicating the WAL objects instead of using a site-to-site VPN. The replica's lag is
-bounded by the primary's `archive_timeout` (60s).
+Arrows point from the side that opens the connection, so every flow between the clouds
+leaves through its own cloud's edge and nothing listens for the other cloud. Dashed:
+used only after a switchover. Cylinders are databases, trapezoids are buckets.
+
+The clouds share no network. WAL travels through object storage instead of a
+site-to-site VPN or streaming replication, which keeps the clouds independent, with
+nothing to tunnel or peer, at the cost of lag. While both archives are healthy, the
+replica trails the primary by up to `archive_timeout` (60s) plus the time to upload and
+replay a segment, so an unplanned failover can lose about a minute of writes; `make e2e`
+measures it. If the primary can't reach its archive, the replica stops advancing, and
+the lag grows for as long as the outage lasts.
 
 ## Tested by breaking it
 
