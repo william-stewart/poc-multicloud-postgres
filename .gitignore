@@ -46,5 +46,6 @@ backend.hcl
 # Reusable modules: the calling stack's lock file is the one that applies
 infra/modules/**/.terraform.lock.hcl
 
-# End-to-end test diagnostics (the evidence/ summaries are committed)
+# End-to-end test and live drill diagnostics (the evidence/ summaries are committed)
 test/e2e/results/
+test/live/results/

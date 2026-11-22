@@ -83,6 +83,7 @@ the roles swap and swap back, WAL waits for the archive during the outage, and
 ```sh
 make validate   # every local check; no cloud credentials needed
 make e2e        # failure scenarios on a local cluster, about 20-30 minutes
+make live-drill EKS=<context> GKE=<context>   # switchover and back on the live clusters
 ```
 
 | Guide | What's in it |

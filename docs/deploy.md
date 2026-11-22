@@ -252,6 +252,32 @@ reaches the instances' metrics port through
 [`allow-prometheus-scrape`](../k8s/policies/base/allow-prometheus-scrape.yaml); without
 it, default deny drops every scrape.
 
+## Automated drill
+
+`make live-drill` runs the non-destructive drills against both clusters and
+records the results in `evidence/live/<UTC time>.md`. It takes about 20-30
+minutes and ends where it started, so it can run any number of times:
+
+```sh
+make live-drill EKS="$EKS" GKE="$GKE"
+```
+
+1. Replication: a row written on `pg-primary` reaches `pg-replica` through S3, and
+   `pg-replica` archives it again to GCS.
+2. Kill the primary pod on EKS: the other instance takes writes and nothing is lost.
+3. Lose `pg-replica`'s pod on GKE: it comes back and resumes from S3.
+4. Planned switchover to GCP and back: no row lost, replication both ways.
+
+It refuses to run unless both contexts are the clusters the stacks built and the
+roles match git. It suspends Flux's `data` layer on both clusters and makes the
+role changes with `kubectl patch`, so nothing is committed or pushed; the
+git-to-Flux step is what the manual switchover below exercises. When the roles
+are back where git has them, it resumes Flux. If a run fails while the roles are
+swapped, Flux stays suspended and the script prints the current state: finish or
+reverse the switchover by hand, then `flux resume kustomization data` on each
+cluster. Diagnostics from a failed run go to `test/live/results/` (gitignored).
+The unplanned failover isn't included, because it needs the failback below.
+
 ## Switchover, failover and failback
 
 `pg-primary` and `pg-replica` are the two members of one CloudNativePG
