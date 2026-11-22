@@ -8,26 +8,23 @@ container-optimized OSes (Bottlerocket, Container-Optimized OS) with no public I
 default-deny network policies allow only named flows and hostnames, and no identity
 holds a long-lived cloud key. Flux reconciles everything inside them from this repo.
 
-```mermaid
-flowchart TB
-  subgraph AWS["AWS · EKS"]
-    primary[("pg-primary")]
-    s3[\"S3: WAL + backups"/]
-  end
-  subgraph GCP["GCP · GKE"]
-    replica[("pg-replica")]
-    gcs[\"GCS: WAL + backups"/]
-  end
-  primary -- "writes" --> s3
-  replica -- "reads" --> s3
-  replica -- "writes" --> gcs
-  primary -. "reads after a switchover" .-> gcs
-```
+![pg-primary on AWS writes WAL and backups to S3; pg-replica on GCP reads them from S3
+and writes its own to GCS, which pg-primary reads after a switchover](docs/high_level.png)
+
+[Diagram source](docs/architecture.md)
 
 The clouds share no network: WAL travels through object storage, with no VPN or inbound
 path between them, at the cost of lag. While healthy, the replica trails by up to
 `archive_timeout` (60s), so an unplanned failover loses about a minute of writes; if
 the primary can't reach S3, the lag grows for as long as the outage lasts.
+
+Each cloud reads the other's bucket with no stored keys. AWS IAM trusts GKE's OIDC
+issuer, so `pg-replica`'s Kubernetes service account token is exchanged at AWS STS for
+a read-only role ([AWS's guide to the same pattern from GCP](https://aws.amazon.com/blogs/security/access-aws-using-a-google-cloud-platform-native-workload-identity/)).
+In the other direction, a GCP Workload Identity Federation pool trusts EKS's OIDC
+issuer, so `pg-primary`'s token is exchanged at Google STS for read access to the GCS
+bucket ([Workload Identity Federation with Kubernetes](https://docs.cloud.google.com/iam/docs/workload-identity-federation-with-kubernetes)).
+Each trust accepts only that one service account, and every credential is short-lived.
 
 ## Testing failure scenarios
 
