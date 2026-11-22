@@ -11,23 +11,22 @@ and Flux reconciles everything inside them from this repo.
 
 ```mermaid
 flowchart TB
-  subgraph AWS["AWS · us-east-1 · VPC 10.10.0.0/16"]
+  subgraph AWS["AWS · us-east-1"]
     subgraph EKS["EKS 1.36 · Bottlerocket · Cilium"]
       app["namespace app"]
       primary[("pg-primary<br/>2 instances · cnpg-db<br/>default deny + allow rules")]
     end
     vpce["S3 gateway endpoint"]
+    s3[\"S3 bucket · pg-primary/<br/>base backups + WAL<br/>versioned · KMS-encrypted · TLS only"/]
   end
 
-  s3[\"S3 bucket · pg-primary/<br/>base backups + WAL<br/>versioned · KMS-encrypted · TLS only"/]
-
-  subgraph GCP["GCP · us-central1 · nodes 10.20.0.0/20"]
+  subgraph GCP["GCP · us-central1"]
     subgraph GKE["GKE 1.36 · COS · Cilium"]
       app2["namespace app"]
       replica[("pg-replica<br/>1 instance · cnpg-db<br/>replays WAL from S3<br/>default deny + allow rules")]
     end
     nat["Cloud NAT<br/>reserved IP"]
-    gcs[\"GCS bucket · pg-replica/<br/>base backups + WAL<br/>versioned · CMEK"/]
+    gcs[\"GCS bucket · pg-replica/<br/>base backups + WAL<br/>versioned · KMS-encrypted (CMEK)"/]
   end
 
   app -- "5432 only" --> primary
