@@ -621,6 +621,7 @@ depends on `policies`), so no database pod ever runs unprotected:
 | 8 | Egress | Database pods → `storage.googleapis.com` | 443 | GKE |
 | 9 | Egress | Database pods → GKE metadata server (Workload Identity tokens) | 80 | GKE |
 | 10 | Egress | Database pods → `sts.googleapis.com`, `storage.googleapis.com` | 443 | EKS |
+| 11 | Ingress | Prometheus (namespace `monitoring`) → instances' metrics | 9187 | Both |
 
 **Shared settings and module interfaces.** `infra/modules/settings` holds the values
 both clouds share (names, regions, zones, address plan, Kubernetes version, node OS,
