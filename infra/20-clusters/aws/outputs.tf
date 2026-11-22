@@ -32,3 +32,18 @@ output "oidc_provider_arn" {
   description = "IAM OIDC provider, for IRSA roles in later stacks (30-data)."
   value       = module.cluster.oidc_provider_arn
 }
+
+output "region" {
+  description = "Region of the cluster, for the AWS CLI calls in make bootstrap."
+  value       = module.settings.regions.aws
+}
+
+output "node_group_name" {
+  description = "The managed node group, created empty; make bootstrap scales it to node_count once Cilium is installed."
+  value       = module.cluster.node_group_name
+}
+
+output "node_count" {
+  description = "Nodes make bootstrap scales the node group to."
+  value       = module.cluster.node_count
+}

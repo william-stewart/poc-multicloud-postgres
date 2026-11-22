@@ -27,6 +27,17 @@ output "kubeconfig_command" {
 
 # --- AWS only ---
 
+output "node_group_name" {
+  description = "The managed node group, created empty; make bootstrap scales it to node_count once Cilium is installed."
+  # EKS's node group ID is "<cluster>:<node group>".
+  value = trimprefix(module.eks.eks_managed_node_groups["default"].node_group_id, "${module.eks.cluster_name}:")
+}
+
+output "node_count" {
+  description = "Nodes make bootstrap scales the node group to."
+  value       = var.node_count
+}
+
 output "oidc_provider_arn" {
   description = "IAM OIDC provider for IRSA."
   value       = module.eks.oidc_provider_arn

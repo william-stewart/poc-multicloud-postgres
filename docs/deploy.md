@@ -14,7 +14,7 @@ layer below it by name, so the order matters in both directions.
 | 1 | State backends (once) | `tofu apply` | 2 min |
 | 2 | Networks | `tofu apply` | 3–5 min |
 | 3 | Clusters | `tofu apply` | 12–15 min (EKS) |
-| 4 | Platform: Cilium, CoreDNS, Flux, then Flux installs the rest | `make bootstrap` | 5–8 min |
+| 4 | Platform: Cilium, the EKS nodes, CoreDNS, Flux, then Flux installs the rest | `make bootstrap` | 8–12 min |
 | 5 | Archives: S3 and GCS buckets, IAM, Workload Identity Federation | `tofu apply` | 2–3 min |
 | 6 | Credentials: the app owner on both clusters | `make app-credentials` | 1 min |
 | 7 | Primary on EKS: network policies, then the database | `make data-vars` | 5 min + first backup |
@@ -90,7 +90,10 @@ export EKS=poc-mcpg
 export GKE="$(kubectl config get-contexts -o name | grep '^gke_')"
 ```
 
-Nodes stay `NotReady` until Cilium is installed in the next step; that is expected.
+The EKS node group is created with no nodes. Without a CNI they could never become
+`Ready`, and EKS doesn't finish creating a node group until they are, so `make
+bootstrap` adds them in the next step, once Cilium is installed. GKE's nodes come up
+tainted, and run nothing until Cilium removes the taint.
 Only the IAM principal that ran the apply is a cluster admin on EKS. If your IP
 changes, re-apply with the new `MY_IP`.
 
@@ -106,9 +109,11 @@ one the stack built. It then:
 
 1. writes the cluster's account-specific values (API host, IAM role ARNs, DNS IP) from
    `tofu output` into the `flux-system/cluster-vars` ConfigMap
-2. installs Cilium with Helm and waits for the agents, the operator and the nodes;
-   on EKS it then installs CoreDNS, because Flux can't resolve `github.com` without it
-3. installs Flux with the deploy key and points it at `k8s/clusters/<cloud>`
+2. installs Cilium with Helm; on EKS it then scales the node group to `node_count`
+   and waits for the nodes to register
+3. waits for the Cilium agents, the operator and the nodes to be `Ready`; on EKS it
+   then installs CoreDNS, because Flux can't resolve `github.com` without it
+4. installs Flux with the deploy key and points it at `k8s/clusters/<cloud>`
 
 Flux takes over the Cilium and CoreDNS releases (same versions and values files) and
 installs cert-manager, the CloudNativePG operator, the Barman Cloud plugin and, on EKS,

@@ -127,9 +127,14 @@ locals {
     instance_types = [var.machine_type]
     subnet_ids     = var.subnet_ids
 
-    min_size     = var.node_count
+    # Created empty, then scaled to node_count by make bootstrap once Cilium
+    # is installed. With no CNI, nodes stay NotReady, and EKS doesn't mark a
+    # node group ACTIVE until its nodes are healthy, so creating it full would
+    # leave tofu apply waiting on a step that runs after it. The EKS module
+    # ignores later changes to desired_size, so the scale-up is no drift.
+    min_size     = 0
     max_size     = var.node_count
-    desired_size = var.node_count
+    desired_size = 0
 
     taints = { cilium = local.cilium_taint }
 
