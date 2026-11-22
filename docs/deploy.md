@@ -281,6 +281,9 @@ make live-drill EKS="$EKS" GKE="$GKE"
 2. Kill the primary pod on EKS: the other instance takes writes and nothing is lost.
 3. Lose `pg-replica`'s pod on GKE: it comes back and resumes from S3.
 4. Planned switchover to GCP and back: no row lost, replication both ways.
+5. Network policy: how many flows Cilium dropped in `cnpg-db` during the run, with
+   the first few printed, so a missing allow rule shows up by name rather than as a
+   stuck archive.
 
 It refuses to run unless both contexts are the clusters the stacks built and the
 roles match git. It suspends Flux's `data` layer on both clusters and makes the
