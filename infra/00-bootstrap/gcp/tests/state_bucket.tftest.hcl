@@ -84,10 +84,10 @@ run "enables_the_apis_later_stacks_need" {
 
   assert {
     condition = alltrue([
-      for api in ["cloudkms.googleapis.com", "storage.googleapis.com", "iam.googleapis.com", "sts.googleapis.com"] :
+      for api in ["cloudkms.googleapis.com", "storage.googleapis.com", "iam.googleapis.com", "sts.googleapis.com", "container.googleapis.com"] :
       contains(keys(google_project_service.this), api)
     ])
-    error_message = "KMS, Storage, IAM and STS must be enabled here: later stacks look up keys and the Workload Identity pool."
+    error_message = "KMS, Storage, IAM, STS and Kubernetes Engine must be enabled here: later stacks read them at plan time."
   }
 
   assert {
