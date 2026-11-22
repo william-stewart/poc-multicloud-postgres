@@ -1,6 +1,9 @@
 # Rule 5: WAL archive and base backups in S3 (written on EKS, read on GKE),
-# HTTPS only, to the bucket's regional endpoints by name. Covers the database
-# pods and CloudNativePG's jobs (recovery, join), which all carry cnpg.io/cluster.
+# HTTPS only, to the bucket's endpoints by name. Covers the database pods and
+# CloudNativePG's jobs (recovery, join), which all carry cnpg.io/cluster.
+# Barman's S3 client (boto3) addresses a us-east-1 bucket through the legacy
+# global name, <bucket>.s3.amazonaws.com, so the global names are allowed
+# alongside the regional ones; IAM still limits access to the one bucket.
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
@@ -15,6 +18,8 @@ spec:
     - toFQDNs:
         - matchName: s3.${WAL_BUCKET_REGION}.amazonaws.com
         - matchPattern: "*.s3.${WAL_BUCKET_REGION}.amazonaws.com"
+        - matchName: s3.amazonaws.com
+        - matchPattern: "*.s3.amazonaws.com"
       toPorts:
         - ports:
             - port: "443"
