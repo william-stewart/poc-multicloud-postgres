@@ -81,5 +81,6 @@ cat <<EOF
 
 Flux applies k8s/data/$cloud on its next reconcile. To apply it now and watch:
   flux --context $context reconcile kustomization data --with-source
-  kubectl --context $context -n cnpg-db get cluster,backup -w
+  kubectl --context $context -n cnpg-db get cluster -w
+  kubectl --context $context -n cnpg-db get backup -w
 EOF

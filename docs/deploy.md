@@ -165,7 +165,8 @@ clusters are up, GKE already holds the credentials if AWS is lost.
 
 ```sh
 make data-vars CLOUD=aws CONTEXT="$EKS"
-kubectl --context "$EKS" -n cnpg-db get cluster,backup -w
+kubectl --context "$EKS" -n cnpg-db get cluster pg-primary -w   # until "Cluster in healthy state"
+kubectl --context "$EKS" -n cnpg-db get backup -w               # until the first backup is completed
 ```
 
 `make data-vars` stores the bucket names, region and writer role in the
