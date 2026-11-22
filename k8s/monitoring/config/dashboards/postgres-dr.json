@@ -49,7 +49,7 @@
         "x": 0,
         "y": 1,
         "w": 12,
-        "h": 6
+        "h": 7
       },
       "targets": [
         {
@@ -92,16 +92,8 @@
             }
           ],
           "color": {
-            "mode": "thresholds"
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "text",
-                "value": null
-              }
-            ]
+            "mode": "fixed",
+            "fixedColor": "text"
           },
           "custom": {
             "fillOpacity": 80,
@@ -114,10 +106,12 @@
         "showValue": "auto",
         "mergeValues": true,
         "rowHeight": 0.8,
+        "alignValue": "center",
         "legend": {
-          "showLegend": false
-        },
-        "alignValue": "center"
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        }
       }
     },
     {
@@ -133,7 +127,7 @@
         "x": 12,
         "y": 1,
         "w": 12,
-        "h": 6
+        "h": 7
       },
       "targets": [
         {
@@ -142,7 +136,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "max by (cluster, pod) (2 * cnpg_collector_fencing_on{cluster=~\"pg-.*\"}) > 0 or max by (cluster, pod) (cnpg_collector_up{cluster=~\"pg-.*\"})",
+          "expr": "max by (cluster, pod) (2 * cnpg_collector_fencing_on{cluster=~\"pg-primary|pg-replica\"}) > 0 or max by (cluster, pod) (cnpg_collector_up{cluster=~\"pg-primary|pg-replica\"})",
           "legendFormat": "{{pod}}"
         }
       ],
@@ -171,16 +165,8 @@
             }
           ],
           "color": {
-            "mode": "thresholds"
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "text",
-                "value": null
-              }
-            ]
+            "mode": "fixed",
+            "fixedColor": "text"
           },
           "custom": {
             "fillOpacity": 80,
@@ -193,10 +179,12 @@
         "showValue": "auto",
         "mergeValues": true,
         "rowHeight": 0.8,
+        "alignValue": "center",
         "legend": {
-          "showLegend": false
-        },
-        "alignValue": "center"
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        }
       }
     },
     {
@@ -206,7 +194,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 7,
+        "y": 8,
         "w": 24,
         "h": 1
       },
@@ -215,15 +203,15 @@
     {
       "id": 5,
       "type": "timeseries",
-      "title": "Seconds since the last WAL segment was archived",
-      "description": "Per Cluster. pg-primary archives to S3, pg-replica to GCS. archive_timeout (60s) closes a segment a minute after the last switch, but only if WAL was written since, so a quiet database saw-tooths up to about two minutes (the dashed line). A line that keeps climbing past it means archiving has stopped: the recovery point is growing.",
+      "title": "How long closed WAL has waited for the archive",
+      "description": "Per Cluster (pg-primary archives to S3, pg-replica to GCS): while a closed WAL segment waits to be archived, the time since the archive last accepted one; 0 when nothing waits. Healthy archiving takes seconds. A line that keeps climbing means the archive isn't accepting WAL, and everything written meanwhile would be lost with this cloud. An idle database writes no WAL, so it stays at 0; the time since the last archival on its own would climb there for no reason.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "gridPos": {
         "x": 0,
-        "y": 8,
+        "y": 9,
         "w": 12,
         "h": 8
       },
@@ -234,7 +222,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "max by (cluster) (cnpg_pg_stat_archiver_seconds_since_last_archival{cluster=~\"pg-primary|pg-replica\"} >= 0)",
+          "expr": "max by (cluster) (cnpg_pg_stat_archiver_seconds_since_last_archival{cluster=~\"pg-primary|pg-replica\"} >= 0) * on (cluster) (max by (cluster) (cnpg_collector_pg_wal_archive_status{cluster=~\"pg-primary|pg-replica\", value=\"ready\"}) > bool 0)",
           "legendFormat": "{{cluster}}"
         }
       ],
@@ -261,7 +249,7 @@
               },
               {
                 "color": "red",
-                "value": 120
+                "value": 60
               }
             ]
           }
@@ -282,15 +270,15 @@
     {
       "id": 6,
       "type": "timeseries",
-      "title": "WAL segments each archive is behind the newest",
-      "description": "How many 16MiB WAL segments each Cluster's archive trails the most recently archived segment of either Cluster. The replica's line is the cross-cloud lag: it archives each segment after replaying it, so 0 means it has replayed everything the primary archived.",
+      "title": "WAL segments the replica's archive trails the primary's",
+      "description": "The cross-cloud lag, in 16MiB WAL segments, for the Cluster in replica mode (after a switchover, the other one). It archives each segment after replaying it, so 0 means it has replayed everything the primary archived. The primary's line is always 0: comparing it the other way would only show CloudNativePG's 30s metrics cache.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "gridPos": {
         "x": 12,
-        "y": 8,
+        "y": 9,
         "w": 12,
         "h": 8
       },
@@ -301,7 +289,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "scalar(max(cnpg_pg_stat_archiver_last_archived_wal_start_lsn{cluster=~\"pg-primary|pg-replica\"})) - max by (cluster) (cnpg_pg_stat_archiver_last_archived_wal_start_lsn{cluster=~\"pg-primary|pg-replica\"} >= 0)",
+          "expr": "(scalar(max(cnpg_pg_stat_archiver_last_archived_wal_start_lsn{cluster=~\"pg-primary|pg-replica\"})) - max by (cluster) (cnpg_pg_stat_archiver_last_archived_wal_start_lsn{cluster=~\"pg-primary|pg-replica\"} >= 0)) * on (cluster) (max by (cluster) (cnpg_collector_replica_mode{cluster=~\"pg-primary|pg-replica\"}) == bool 1)",
           "legendFormat": "{{cluster}}"
         }
       ],
@@ -341,7 +329,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 16,
+        "y": 17,
         "w": 12,
         "h": 8
       },
@@ -352,7 +340,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "max by (cluster) (cnpg_collector_pg_wal_archive_status{cluster=~\"pg-.*\", value=\"ready\"})",
+          "expr": "max by (cluster) (cnpg_collector_pg_wal_archive_status{cluster=~\"pg-primary|pg-replica\", value=\"ready\"})",
           "legendFormat": "{{cluster}}"
         }
       ],
@@ -392,7 +380,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 16,
+        "y": 17,
         "w": 12,
         "h": 8
       },
@@ -439,7 +427,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 24,
+        "y": 25,
         "w": 24,
         "h": 1
       },
@@ -456,7 +444,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 25,
+        "y": 26,
         "w": 12,
         "h": 5
       },
@@ -524,7 +512,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 25,
+        "y": 26,
         "w": 12,
         "h": 5
       },
@@ -580,7 +568,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 30,
+        "y": 31,
         "w": 24,
         "h": 1
       },
@@ -597,7 +585,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 31,
+        "y": 32,
         "w": 24,
         "h": 7
       },
