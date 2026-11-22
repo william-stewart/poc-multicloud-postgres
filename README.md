@@ -1,11 +1,16 @@
 # poc-multicloud-postgres
 
-PostgreSQL disaster recovery across AWS and Google Cloud. A primary on EKS archives its
-WAL to S3; a replica on GKE replays it and keeps its own backups in GCS. Either cloud
-can restore on its own, and either can become the primary through a commit to git.
+PostgreSQL disaster recovery across AWS and Google Cloud, run by the CloudNativePG
+(CNPG) operator. A primary on EKS archives its WAL to S3; a CNPG replica cluster on GKE
+replays it and keeps its own backups in GCS. Either cloud can restore on its own, and
+either can become the primary through a commit to git.
 
 ![pg-primary on AWS writes WAL and backups to S3; pg-replica on GCP reads them from S3
 and writes its own to GCS, which pg-primary reads after a switchover](docs/high_level.png)
+
+**Database:** PostgreSQL 18 • CloudNativePG • Barman Cloud plugin\
+**Infrastructure:** OpenTofu • EKS (Bottlerocket) • GKE (Container-Optimized OS) • S3 • GCS\
+**In-cluster:** Flux • Helm • Cilium • Prometheus • Grafana
 
 - **RPO of about 60s** (`archive_timeout`) while healthy, with no network path between
   the clouds.
