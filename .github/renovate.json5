@@ -1,0 +1,196 @@
+// Renovate (Mend Renovate Community Cloud). Every update arrives as a pull
+// request that must pass `make validate`; nothing merges automatically.
+{
+  $schema: "https://docs.renovatebot.com/renovate-schema.json",
+  extends: [
+    "config:recommended",
+    // Conventional Commits, like every other commit in this repo.
+    ":semanticCommits",
+    // Keep GitHub Actions pinned by commit, with the version as a comment.
+    "helpers:pinGitHubActionDigests",
+  ],
+  schedule: ["before 6am on monday"],
+  timezone: "Etc/UTC",
+  labels: ["dependencies"],
+  // config:recommended skips test/ and tests/ directories, but the e2e
+  // manifests and infra/tests/contracts pin versions that must move with the
+  // rest of the repo.
+  ignorePresets: [":ignoreModulesAndTests"],
+  // Let new releases settle before proposing them: most bad or malicious
+  // releases are pulled within days.
+  minimumReleaseAge: "3 days",
+  // Major updates wait for approval on the Dependency Dashboard issue.
+  major: {
+    dependencyDashboardApproval: true,
+  },
+  // Lock files are kept current weekly, separately from version bumps.
+  lockFileMaintenance: {
+    enabled: true,
+    schedule: ["before 6am on monday"],
+  },
+
+  // Off by default in Renovate. Hook revs are frozen to commits with the tag as
+  // a comment, as `pre-commit autoupdate --freeze` writes them.
+  "pre-commit": {
+    enabled: true,
+  },
+  // HelmReleases and HelmRepositories live all over k8s/, not only in the
+  // default gotk-components.yaml.
+  flux: {
+    managerFilePatterns: ["/^k8s/.+\\.ya?ml$/"],
+  },
+  // Plain manifests with container images (the e2e test's S3 server).
+  kubernetes: {
+    managerFilePatterns: ["/^test/e2e/manifests/.+\\.ya?ml$/"],
+  },
+
+  customManagers: [
+    {
+      // asdf can't look flux or kubeconform up, so read them here. fluxcd/flux2
+      // is the dependency the flux manager finds in gotk-components.yaml, so
+      // the CLI and the manifests move in the same PR.
+      customType: "regex",
+      description: "flux in .tool-versions",
+      managerFilePatterns: ["/^\\.tool-versions$/"],
+      matchStrings: ["(?m)^flux (?<currentValue>\\S+)$"],
+      depNameTemplate: "fluxcd/flux2",
+      datasourceTemplate: "github-releases",
+      extractVersionTemplate: "^v(?<version>.+)$",
+    },
+    {
+      customType: "regex",
+      description: "kubeconform in .tool-versions",
+      managerFilePatterns: ["/^\\.tool-versions$/"],
+      matchStrings: ["(?m)^kubeconform (?<currentValue>\\S+)$"],
+      depNameTemplate: "yannh/kubeconform",
+      datasourceTemplate: "github-releases",
+      extractVersionTemplate: "^v(?<version>.+)$",
+    },
+    {
+      // Upstream OpenTofu modules are pinned to a commit, with the tag in the
+      // comment above. Update both together.
+      customType: "regex",
+      description: "Terraform modules pinned by commit",
+      managerFilePatterns: ["/^infra/.+\\.tf$/"],
+      matchStrings: [
+        "# (?<currentValue>v[0-9][^,\\s]*), pinned to the commit[^\\n]*\\n\\s*source\\s*=\\s*\"git::https://github\\.com/(?<depName>[^\"?]+?)\\.git\\?ref=(?<currentDigest>[0-9a-f]{40})\"",
+      ],
+      datasourceTemplate: "github-tags",
+    },
+    {
+      // The PostgreSQL image is set in a JSON patch, which no manager parses.
+      customType: "regex",
+      description: "CloudNativePG PostgreSQL image",
+      managerFilePatterns: ["/^k8s/data/components/postgres-image/kustomization\\.yaml$/"],
+      matchStrings: [
+        "value: (?<depName>ghcr\\.io/cloudnative-pg/postgresql):(?<currentValue>[^@\\s]+)@(?<currentDigest>sha256:[a-f0-9]{64})",
+      ],
+      datasourceTemplate: "docker",
+    },
+    {
+      // bootstrap.sh installs Cilium and CoreDNS before Flux exists, at the
+      // versions the HelmReleases pin (make validate checks they match).
+      // Same depName and datasource as the HelmReleases, so both land in one PR.
+      customType: "regex",
+      description: "Cilium chart installed by bootstrap.sh",
+      managerFilePatterns: ["/^k8s/bootstrap\\.sh$/"],
+      matchStrings: ['CILIUM_VERSION="(?<currentValue>[^"]+)"'],
+      depNameTemplate: "cilium",
+      registryUrlTemplate: "https://helm.cilium.io",
+      datasourceTemplate: "helm",
+    },
+    {
+      customType: "regex",
+      description: "CoreDNS chart installed by bootstrap.sh",
+      managerFilePatterns: ["/^k8s/bootstrap\\.sh$/"],
+      matchStrings: ['COREDNS_VERSION="(?<currentValue>[^"]+)"'],
+      depNameTemplate: "coredns",
+      registryUrlTemplate: "https://coredns.github.io/helm",
+      datasourceTemplate: "helm",
+    },
+  ],
+
+  // Later rules override earlier ones, so specific groups (checkov, flux)
+  // come after the broad ones.
+  packageRules: [
+    {
+      description: "One PR for non-major GitHub Actions updates",
+      matchManagers: ["github-actions"],
+      matchUpdateTypes: ["minor", "patch", "digest", "pin", "pinDigest"],
+      groupName: "GitHub Actions",
+    },
+    {
+      description: "One PR for non-major pre-commit hook updates",
+      matchManagers: ["pre-commit"],
+      matchUpdateTypes: ["minor", "patch", "digest", "pin", "pinDigest"],
+      groupName: "pre-commit hooks",
+    },
+    {
+      // checkov supports Python up to 3.13, and the pre-commit hooks and CI
+      // run it under 3.13. Hold Python until checkov supports a newer one.
+      description: "Hold Python at 3.13 for checkov",
+      matchDepNames: ["python"],
+      allowedVersions: "<3.14",
+    },
+    {
+      // checkov is pinned in .tool-versions, as a pre-commit hook rev and as
+      // a pip dependency of the k8s-validate hook. Move them together.
+      description: "checkov, everywhere it is pinned",
+      matchPackageNames: ["/checkov/"],
+      groupName: "checkov",
+    },
+    {
+      // The flux CLI version (.tool-versions), gotk-components.yaml and the
+      // controller digests in k8s/flux/kustomization.yaml must agree; make
+      // validate fails otherwise.
+      description: "Flux CLI, manifests and controller images",
+      matchPackageNames: ["/^ghcr\\.io/fluxcd//", "/^fluxcd/flux2$/", "flux", "flux2"],
+      groupName: "flux",
+      prBodyNotes: [
+        "If `make validate` fails on Flux versions, run `make flux-manifests` and update the controller digests in `k8s/flux/kustomization.yaml`.",
+      ],
+    },
+    {
+      // The GKE replica replays the EKS primary's WAL, which only works on
+      // the same major version; a major upgrade is a migration, not a bump.
+      description: "No PostgreSQL major upgrades",
+      matchDepNames: ["ghcr.io/cloudnative-pg/postgresql"],
+      matchUpdateTypes: ["major"],
+      enabled: false,
+    },
+    {
+      // These binaries are installed in CI from release tarballs checked
+      // against a SHA-256 in .github/workflows/validate.yml.
+      description: "Tools whose CI checksum must be updated by hand",
+      matchDepNames: ["gitleaks", "kustomize", "yannh/kubeconform"],
+      prBodyNotes: [
+        "Update this tool's `*_SHA256` in `.github/workflows/validate.yml` from the release's checksums file, or CI fails the checksum check.",
+      ],
+    },
+    {
+      // Handled by the "Terraform modules pinned by commit" custom manager,
+      // which keeps the version comment in step with the commit.
+      description: "Commit-pinned modules: custom manager only",
+      matchManagers: ["terraform"],
+      matchDepTypes: ["module"],
+      enabled: false,
+    },
+    {
+      // The Flux controller images are pinned with newTag plus a separate
+      // digest field, which Renovate can't update. The flux group's PR note
+      // covers them.
+      description: "Flux controller pins: updated with make flux-manifests",
+      matchManagers: ["kustomize"],
+      matchPackageNames: ["/^ghcr\\.io/fluxcd//"],
+      enabled: false,
+    },
+    {
+      // required_version constrains OpenTofu, but Renovate reads it as
+      // Terraform. The OpenTofu version lives in .tool-versions.
+      description: "Ignore required_version in OpenTofu code",
+      matchManagers: ["terraform"],
+      matchDepTypes: ["required_version"],
+      enabled: false,
+    },
+  ],
+}
