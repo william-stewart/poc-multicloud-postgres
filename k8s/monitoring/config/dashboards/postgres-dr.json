@@ -40,7 +40,7 @@
       "id": 2,
       "type": "state-timeline",
       "title": "Role of each Cluster",
-      "description": "Primary: an instance accepts writes. Replica: replica.primary names the other Cluster, and this one replays its archive. No primary: this Cluster should be the primary but no instance accepts writes, as during a failover between its instances or while it is being promoted. Fenced: every instance is stopped (cnpg.io/fencedInstances), as after an unplanned failover. A gap means no instance answered.",
+      "description": "Primary: an instance accepts writes. Replica: replica.primary names the other Cluster, and this one replays its archive. No primary: this Cluster should be the primary but no instance accepts writes, as during a failover between its instances or while it is being promoted. Fenced: every instance is stopped (cnpg.io/fencedInstances), as after an unplanned failover. A planned switchover also fences the old primary for a few seconds while it demotes it. A gap means no instance answered.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -289,7 +289,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "(scalar(max(cnpg_pg_stat_archiver_last_archived_wal_start_lsn{cluster=~\"pg-primary|pg-replica\"})) - max by (cluster) (cnpg_pg_stat_archiver_last_archived_wal_start_lsn{cluster=~\"pg-primary|pg-replica\"} >= 0)) * on (cluster) (max by (cluster) (cnpg_collector_replica_mode{cluster=~\"pg-primary|pg-replica\"}) == bool 1)",
+          "expr": "(scalar(max((cnpg_pg_stat_archiver_last_archived_wal_start_lsn{cluster=~\"pg-primary|pg-replica\"} >= 0 unless cnpg_pg_stat_archiver_last_archived_wal_start_lsn{cluster=~\"pg-primary|pg-replica\"} % 4294967296 == 0))) - max by (cluster) ((cnpg_pg_stat_archiver_last_archived_wal_start_lsn{cluster=~\"pg-primary|pg-replica\"} >= 0 unless cnpg_pg_stat_archiver_last_archived_wal_start_lsn{cluster=~\"pg-primary|pg-replica\"} % 4294967296 == 0))) * on (cluster) (max by (cluster) (cnpg_collector_replica_mode{cluster=~\"pg-primary|pg-replica\"}) == bool 1)",
           "legendFormat": "{{cluster}}"
         }
       ],
@@ -578,7 +578,7 @@
       "id": 13,
       "type": "timeseries",
       "title": "Rows written per minute in the app database",
-      "description": "Rows inserted, updated or deleted in the app database, per Cluster. Only the primary writes, so this shows where writes land. DDL counts too: one CREATE TABLE writes dozens of system catalog rows. Transaction counts would mislead here: they include read-only queries, the metrics collector's own among them, on replicas too.",
+      "description": "Rows inserted, updated or deleted in the app database, per Cluster. Only the primary writes, so this shows where writes land. DDL counts too: one CREATE TABLE writes dozens of system catalog rows, so the scale is logarithmic: one row a minute stays visible next to it, and minutes with no writes leave a gap. Transaction counts would mislead here: they include read-only queries, the metrics collector's own among them, on replicas too.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -608,9 +608,12 @@
             "lineWidth": 2,
             "fillOpacity": 10,
             "showPoints": "never",
-            "spanNulls": false
-          },
-          "min": 0
+            "spanNulls": false,
+            "scaleDistribution": {
+              "type": "log",
+              "log": 10
+            }
+          }
         },
         "overrides": []
       },
