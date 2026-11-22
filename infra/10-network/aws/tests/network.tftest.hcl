@@ -33,12 +33,13 @@ run "uses_shared_settings" {
   command = plan
 
   assert {
-    condition     = length(module.network.azs) == 3
-    error_message = "The VPC must span the three AZs from settings."
+    condition     = module.network.azs == ["us-east-1a", "us-east-1b", "us-east-1c"]
+    error_message = "The VPC must span the three AZs from settings, in their order."
   }
 
+  # Later stacks (network-lookup/aws) find the VPC by this name.
   assert {
-    condition     = module.settings.cidrs.aws_vpc == "10.10.0.0/16"
-    error_message = "The VPC CIDR must come from the settings module."
+    condition     = module.network.network_name == "poc-mcpg"
+    error_message = "The VPC must be named after the settings prefix."
   }
 }

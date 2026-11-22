@@ -7,9 +7,10 @@ variables {
 run "uses_shared_settings" {
   command = plan
 
+  # Later stacks (network-lookup/gcp) find the network and subnet by name.
   assert {
-    condition     = module.settings.cidrs.gcp_nodes == "10.20.0.0/20"
-    error_message = "The node range must come from the settings module."
+    condition     = module.network.network_name == "poc-mcpg" && module.network.subnet_name == "poc-mcpg-nodes"
+    error_message = "The network and node subnet must be named after the settings prefix."
   }
 
   assert {
