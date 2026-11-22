@@ -151,7 +151,9 @@ one the stack built. It then:
 
 Flux takes over the Cilium and CoreDNS releases (same versions and values files) and
 installs cert-manager, the CloudNativePG operator, the Barman Cloud plugin and, on EKS,
-the EBS CSI driver.
+the EBS CSI driver. Then it installs Prometheus and Grafana (`k8s/monitoring`) and the
+PostgreSQL dashboard, which fills in once the databases exist (see
+[Dashboard](#dashboard)).
 
 ```sh
 flux --context "$EKS" get helmreleases -A          # all Ready
@@ -300,9 +302,8 @@ port 9187. One PodMonitor scrapes them every 10s. Each scenario has its own shap
 | Rows written per minute | Inserts, updates and deletes in `app`, per Cluster | Where each scenario's writes land |
 
 In the end-to-end test both archives are the same local S3 server and replication
-crosses no network, so the lag is shorter than on the clouds. The dashboard isn't
-deployed to EKS and GKE yet. That needs a Flux Kustomization for `k8s/monitoring`,
-and an allow rule in `k8s/policies` from the `monitoring` namespace to port 9187.
+crosses no network, so the lag is shorter than on the clouds. Flux installs the same
+stack and dashboard on EKS and GKE (see [Dashboard](#dashboard)).
 
 ## Verify
 
@@ -345,6 +346,24 @@ kubectl --context "$EKS" run nettest --rm -it --restart=Never -n app --image=pos
 kubectl --context "$GKE" run nettest --rm -it --restart=Never -n app --image=postgres:18 -- \
   pg_isready -h pg-replica-rw.cnpg-db -t 5
 ```
+
+### Dashboard
+
+Flux runs Prometheus and Grafana on each cluster, with the same chart, values and
+dashboard as `make e2e`. Each Grafana shows its own cluster's Cluster: `pg-primary`
+on EKS, `pg-replica` on GKE. There is no network path between the clouds, so open
+both side by side to see the whole topology:
+
+```sh
+make grafana CONTEXT="$EKS"              # http://localhost:3000/d/postgres-dr
+make grafana CONTEXT="$GKE" PORT=3001    # in another terminal: http://localhost:3001/d/postgres-dr
+```
+
+Grafana opens read-only without a login, and only through the port-forward; the admin
+password is in the `monitoring/kube-prometheus-stack-grafana` Secret. Prometheus keeps
+two days of data, on an emptyDir volume, so a restart of its pod loses it. Prometheus
+reaches the instances' metrics port through rule 11 below; without it, default deny
+drops every scrape.
 
 ## Switchover, failover and failback
 
@@ -655,7 +674,7 @@ stack's state file.
 | `k8s/platform` | Cilium, CoreDNS, cert-manager, CloudNativePG, Barman plugin, EBS CSI |
 | `k8s/data` | The PostgreSQL clusters, object stores and backups |
 | `k8s/policies` | Default deny and Cilium allow rules for `cnpg-db` |
-| `k8s/monitoring` | Prometheus, Grafana, the PodMonitor and the PostgreSQL dashboard (used by `make e2e` so far) |
+| `k8s/monitoring` | Prometheus, Grafana, the PodMonitor and the PostgreSQL dashboard (Flux on both clusters, and `make e2e`) |
 | `k8s/*.sh` | `bootstrap.sh`, `data-vars.sh`, `app-credentials.sh` (run through `make`) |
 | `test/e2e` | The local end-to-end test (`make e2e`) and its overlays of `k8s/data` |
 | `evidence/e2e` | Results of end-to-end runs |
@@ -698,8 +717,8 @@ token and no cloud credentials.
   unplanned failover (rebuilding from the other archive) isn't in `make e2e` yet.
 - A fence that doesn't depend on the old primary's cluster reconciling first, and
   client routing across clouds (DNS that follows the primary).
-- Prometheus and the dashboard on EKS and GKE (see
-  [Watching a run in Grafana](#watching-a-run-in-grafana)), alerts on archive failures
-  and replica lag; regional, multi-AZ clusters; one NAT gateway per AZ.
+- One Grafana across both clouds (both Prometheus servers writing to a shared or hosted
+  one), persistent Prometheus storage, and alerts on archive failures and replica
+  lag; regional, multi-AZ clusters; one NAT gateway per AZ.
 - Cluster-wide default deny (`cnpg-system`, `kube-system`) and security-group-level
   egress filtering on the EKS nodes.
