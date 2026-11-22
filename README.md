@@ -286,6 +286,18 @@ Grafana opens read-only without a login. The admin password is in the
 `monitoring/kube-prometheus-stack-grafana` Secret. Give the VM about 10 GB with
 monitoring on.
 
+![The dashboard over a full end-to-end run: the roles swap during the switchover and
+back, pg-primary ends fenced, and WAL waits for the archive through the object store
+outage](evidence/e2e_grafana.png)
+
+*A full run ([its results](evidence/e2e/20261122T003509Z.md)), with the
+planned switchover's mark under the cursor. Top left, the roles: a moment with no
+primary when the pod is killed, the swap to `pg-replica` and back, then the unplanned
+failover that leaves `pg-primary` fenced. Bottom left, WAL waits for the archive for
+about three minutes during the object store outage, and for about a minute before the
+fence, which is the writes the failover loses. Bottom right, the replica stays within
+two WAL segments of the primary.*
+
 The run marks each scenario on every panel as a region between dashed lines; hover over
 a line to see its name, or turn the marks off with the *End-to-end test scenarios*
 toggle. `run.sh` adds them through its own port-forward to Grafana, with the admin
