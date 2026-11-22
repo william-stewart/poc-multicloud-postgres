@@ -222,7 +222,7 @@
       "id": 5,
       "type": "timeseries",
       "title": "How long closed WAL has waited for the archive",
-      "description": "Per Cluster (pg-primary archives to S3, pg-replica to GCS): while a closed WAL segment waits to be archived, the time since the archive last accepted one; 0 when nothing waits. Healthy archiving takes seconds. A line that keeps climbing means the archive isn't accepting WAL, and everything written meanwhile would be lost with this cloud. An idle database writes no WAL, so it stays at 0; the time since the last archival on its own would climb there for no reason.",
+      "description": "Per Cluster (pg-primary archives to S3, pg-replica to GCS): how long closed WAL segments have been waiting to be archived, to within the 10s scrape interval, and 0 when none wait. Healthy archiving takes seconds. A line that keeps climbing means the archive isn't accepting WAL, and everything written meanwhile would be lost with this cloud. Not the time since the last archival: an idle database archives nothing for as long as it is idle, so that would climb for no reason. Fenced instances are left out.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -240,7 +240,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "max by (cluster) (cnpg_pg_stat_archiver_seconds_since_last_archival{cluster=~\"pg-primary|pg-replica\"} >= 0) * on (cluster) (max by (cluster) (cnpg_collector_pg_wal_archive_status{cluster=~\"pg-primary|pg-replica\", value=\"ready\"}) > bool 0)",
+          "expr": "(time() - max_over_time(timestamp(max by (cluster) (cnpg_collector_pg_wal_archive_status{cluster=~\"pg-primary|pg-replica\", value=\"ready\"} unless on (pod) cnpg_collector_fencing_on == 1) == 0)[1h:10s])) * (max by (cluster) (cnpg_collector_pg_wal_archive_status{cluster=~\"pg-primary|pg-replica\", value=\"ready\"} unless on (pod) cnpg_collector_fencing_on == 1) > bool 0)",
           "legendFormat": "{{cluster}}"
         }
       ],
@@ -340,7 +340,7 @@
       "id": 7,
       "type": "timeseries",
       "title": "WAL segments waiting to be archived",
-      "description": "Segments PostgreSQL has closed but not yet archived (archive_status/*.ready). They pile up on the WAL volume while the object store is unreachable, and drain when it is back.",
+      "description": "Segments PostgreSQL has closed but not yet archived (archive_status/*.ready). They pile up on the WAL volume while the object store is unreachable, and drain when it is back. Fenced instances are left out: they stop reporting, so their last reading would stay.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -358,7 +358,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "max by (cluster) (cnpg_collector_pg_wal_archive_status{cluster=~\"pg-primary|pg-replica\", value=\"ready\"})",
+          "expr": "max by (cluster) (cnpg_collector_pg_wal_archive_status{cluster=~\"pg-primary|pg-replica\", value=\"ready\"} unless on (pod) cnpg_collector_fencing_on == 1)",
           "legendFormat": "{{cluster}}"
         }
       ],
