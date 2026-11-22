@@ -11,10 +11,10 @@
 # Every provider is mocked, including time and null, which the EKS module
 # uses, so nothing real runs during apply.
 #
-# Limitation: on GKE the CA certificate lives inside the master_auth block,
-# and mocks can't set values inside blocks. So the gcp run checks that the
-# output is a non-empty string taken from master_auth; the base64 format is
-# only checked on AWS, where the mock can supply a realistic value.
+# On GKE the CA certificate lives inside the master_auth block. A mock sets a
+# block's values with an object (not a list of objects, as for the computed
+# certificate_authority attribute on EKS), so both runs check a realistic
+# base64 value.
 
 mock_provider "aws" {
   mock_data "aws_iam_policy_document" {
@@ -87,7 +87,10 @@ mock_provider "google" {
   }
 
   mock_resource "google_container_cluster" {
-    defaults = { endpoint = "203.0.113.30" }
+    defaults = {
+      endpoint    = "203.0.113.30"
+      master_auth = { cluster_ca_certificate = "LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0t" }
+    }
   }
 }
 
@@ -172,8 +175,8 @@ run "gcp" {
   }
 
   assert {
-    condition     = length(output.cluster_ca_certificate) > 0 && output.cluster_ca_certificate == google_container_cluster.this.master_auth[0].cluster_ca_certificate
-    error_message = "cluster_ca_certificate must be the cluster's CA from master_auth."
+    condition     = output.cluster_ca_certificate == "LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0t" && can(base64decode(output.cluster_ca_certificate))
+    error_message = "cluster_ca_certificate must be the cluster's base64 CA from master_auth."
   }
 
   assert {

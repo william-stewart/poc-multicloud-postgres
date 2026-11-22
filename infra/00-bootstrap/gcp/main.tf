@@ -9,7 +9,9 @@ locals {
 
 resource "google_project_service" "this" {
   # iam and sts: Workload Identity Federation for EKS (below).
-  for_each = toset(["cloudkms.googleapis.com", "storage.googleapis.com", "iam.googleapis.com", "sts.googleapis.com"])
+  # container: 20-clusters/gcp reads GKE's available versions at plan time,
+  # before anything in that stack could enable the API.
+  for_each = toset(["cloudkms.googleapis.com", "storage.googleapis.com", "iam.googleapis.com", "sts.googleapis.com", "container.googleapis.com"])
 
   service = each.value
 

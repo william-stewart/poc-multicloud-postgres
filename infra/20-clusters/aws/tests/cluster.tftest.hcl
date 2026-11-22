@@ -27,13 +27,13 @@ mock_provider "aws" {
     defaults = {
       arn                   = "arn:aws:eks:us-east-1:123456789012:cluster/test"
       endpoint              = "https://ABCDEF.gr7.us-east-1.eks.amazonaws.com"
-      identity              = [{ oidc = [{ issuer = "https://oidc.eks.us-east-1.amazonaws.com/id/ABCDEF" }] }]
+      identity              = [{ oidc = [{ issuer = "https://oidc.eks.us-east-1.amazonaws.com/id/0123456789ABCDEF0123456789ABCDEF" }] }]
       certificate_authority = [{ data = "LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0t" }]
     }
   }
 
   mock_resource "aws_iam_openid_connect_provider" {
-    defaults = { arn = "arn:aws:iam::123456789012:oidc-provider/oidc.eks.us-east-1.amazonaws.com/id/ABCDEF" }
+    defaults = { arn = "arn:aws:iam::123456789012:oidc-provider/oidc.eks.us-east-1.amazonaws.com/id/0123456789ABCDEF0123456789ABCDEF" }
   }
 
   mock_resource "aws_launch_template" {
@@ -83,18 +83,29 @@ run "wires_settings_and_network_lookup" {
   command = plan
 
   assert {
-    condition     = module.settings.kubernetes.version == "1.36"
-    error_message = "The cluster version must come from the settings module."
-  }
-
-  assert {
-    condition     = module.settings.kubernetes.node_image.aws == "BOTTLEROCKET_x86_64"
-    error_message = "EKS nodes must run the image from the settings module."
-  }
-
-  assert {
     condition     = length(module.network.private_subnet_ids) == 3
     error_message = "Nodes must use the private subnets found by network-lookup/aws."
+  }
+}
+
+# Values later stacks and scripts depend on.
+run "outputs_match_what_downstream_expects" {
+  command = plan
+
+  assert {
+    condition     = output.cluster_name == "poc-mcpg"
+    error_message = "30-data/aws looks the cluster up by the settings prefix."
+  }
+
+  assert {
+    condition     = strcontains(output.kubeconfig_command, "--alias poc-mcpg")
+    error_message = "docs/deploy.md expects the kube context to be named poc-mcpg."
+  }
+
+  # Same pattern as 30-data/gcp's eks_oidc_issuer_url validation.
+  assert {
+    condition     = can(regex("^https://oidc\\.eks\\.[a-z0-9-]+\\.amazonaws\\.com/id/[0-9A-F]{32}$", output.oidc_issuer_url))
+    error_message = "oidc_issuer_url must be accepted by 30-data/gcp's eks_oidc_issuer_url validation."
   }
 }
 

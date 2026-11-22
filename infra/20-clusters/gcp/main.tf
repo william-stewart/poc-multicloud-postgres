@@ -6,12 +6,8 @@ data "google_project" "this" {
   project_id = var.project_id
 }
 
-resource "google_project_service" "container" {
-  service = "container.googleapis.com"
-
-  # Other stacks may depend on the API; never switch it off on destroy.
-  disable_on_destroy = false
-}
+# The Kubernetes Engine API is enabled by 00-bootstrap/gcp: the cluster
+# module reads GKE's versions at plan time, so it must already be on.
 
 # The network keeps its own state; find it through data sources instead of
 # reading 10-network's state file.
@@ -40,10 +36,9 @@ data "google_kms_crypto_key" "gke_secrets" {
 resource "google_kms_crypto_key_iam_member" "gke_secrets" {
   crypto_key_id = data.google_kms_crypto_key.gke_secrets.id
   role          = "roles/cloudkms.cryptoKeyEncrypterDecrypter"
-  member        = "serviceAccount:service-${data.google_project.this.number}@container-engine-robot.iam.gserviceaccount.com"
-
-  # The service agent only exists once the Kubernetes Engine API is on.
-  depends_on = [google_project_service.container]
+  # The service agent exists once 00-bootstrap/gcp has enabled the
+  # Kubernetes Engine API.
+  member = "serviceAccount:service-${data.google_project.this.number}@container-engine-robot.iam.gserviceaccount.com"
 }
 
 module "cluster" {

@@ -113,30 +113,36 @@ module "eks" {
   }
 
   eks_managed_node_groups = {
-    default = {
-      ami_type       = var.node_image
-      instance_types = [var.machine_type]
-      subnet_ids     = var.subnet_ids
-
-      min_size     = var.node_count
-      max_size     = var.node_count
-      desired_size = var.node_count
-
-      taints = { cilium = local.cilium_taint }
-
-      # The Cilium operator manages ENIs through its own IRSA role (below),
-      # so the node role doesn't need the VPC CNI policy.
-      iam_role_attach_cni_policy = false
-
-      block_device_mappings = local.block_device_mappings
-      bootstrap_extra_args  = local.is_bottlerocket ? local.bottlerocket_settings : null
-
-      # IMDSv2 is required and the hop limit is 1 by default, so pods can't
-      # reach the node's instance credentials.
-    }
+    default = local.default_node_group
   }
 
   tags = var.labels
+}
+
+# A local rather than inline, so tests assert on exactly what the node group
+# receives instead of on the pieces it is built from.
+locals {
+  default_node_group = {
+    ami_type       = var.node_image
+    instance_types = [var.machine_type]
+    subnet_ids     = var.subnet_ids
+
+    min_size     = var.node_count
+    max_size     = var.node_count
+    desired_size = var.node_count
+
+    taints = { cilium = local.cilium_taint }
+
+    # The Cilium operator manages ENIs through its own IRSA role (below),
+    # so the node role doesn't need the VPC CNI policy.
+    iam_role_attach_cni_policy = false
+
+    block_device_mappings = local.block_device_mappings
+    bootstrap_extra_args  = local.is_bottlerocket ? local.bottlerocket_settings : null
+
+    # IMDSv2 is required and the hop limit is 1 by default, so pods can't
+    # reach the node's instance credentials.
+  }
 }
 
 # --- IRSA roles for in-cluster components installed later with Helm ---

@@ -69,8 +69,29 @@ run "cluster_is_hardened" {
   }
 
   assert {
-    condition     = google_container_cluster.this.database_encryption[0].state == "ENCRYPTED"
-    error_message = "Secrets must be encrypted with the customer-managed key."
+    condition = (
+      google_container_cluster.this.database_encryption[0].state == "ENCRYPTED" &&
+      google_container_cluster.this.database_encryption[0].key_name == "projects/poc-test-project/locations/us-central1/keyRings/test-gke/cryptoKeys/test-gke-secrets"
+    )
+    error_message = "Secrets must be encrypted with the customer-managed key passed in."
+  }
+
+  assert {
+    condition     = !google_container_cluster.this.master_auth[0].client_certificate_config[0].issue_client_certificate
+    error_message = "No client certificates: they can't be revoked."
+  }
+
+  assert {
+    condition     = !google_container_cluster.this.master_authorized_networks_config[0].gcp_public_cidrs_access_enabled
+    error_message = "Google Cloud's public IP ranges must not reach the API."
+  }
+
+  assert {
+    condition = (
+      google_container_node_pool.default.node_config[0].shielded_instance_config[0].enable_secure_boot &&
+      google_container_node_pool.default.node_config[0].metadata["disable-legacy-endpoints"] == "true"
+    )
+    error_message = "Nodes must use secure boot and disable the legacy metadata endpoints."
   }
 
   assert {
@@ -92,6 +113,82 @@ run "cluster_is_hardened" {
     condition     = google_project_iam_member.nodes.role == "roles/container.defaultNodeServiceAccount"
     error_message = "The node service account must only get the default node role."
   }
+}
+
+run "node_pool_matches_inputs" {
+  command = plan
+
+  assert {
+    condition = (
+      google_container_node_pool.default.node_count == 2 &&
+      google_container_node_pool.default.node_config[0].machine_type == "e2-standard-4" &&
+      google_container_node_pool.default.location == "us-central1-a"
+    )
+    error_message = "The node pool must use node_count, machine_type and the cluster's zone."
+  }
+
+  assert {
+    condition = (
+      google_container_node_pool.default.management[0].auto_upgrade &&
+      google_container_node_pool.default.upgrade_settings[0].max_unavailable == 0
+    )
+    error_message = "Nodes must follow the release channel and upgrade by surge, never dropping below node_count."
+  }
+
+  assert {
+    condition     = google_container_cluster.this.release_channel[0].channel == "REGULAR" && google_container_cluster.this.min_master_version == "1.36"
+    error_message = "The cluster must start at kubernetes_version on the release channel."
+  }
+}
+
+# GCP rejects these at apply time; mocks don't, so check them here.
+run "names_fit_gcp_limits" {
+  command = plan
+
+  variables {
+    # The longest name settings allows (name_prefix is 3-16 characters).
+    name = "abcdefghijklmnop"
+  }
+
+  assert {
+    condition     = can(regex("^[a-z]([-a-z0-9]{4,28}[a-z0-9])$", google_service_account.nodes.account_id))
+    error_message = "The node service account ID must be 6-30 characters ([a-z][-a-z0-9]*[a-z0-9])."
+  }
+
+  assert {
+    condition     = length(google_container_cluster.this.name) <= 40 && length(google_container_node_pool.default.name) <= 40
+    error_message = "GKE cluster and node pool names must be at most 40 characters."
+  }
+}
+
+# The poolless check must accept exactly 1.36.4-gke.1469000 and later.
+run "accepts_the_minimum_poolless_version" {
+  command = plan
+
+  override_data {
+    target = data.google_container_engine_versions.this
+    values = { valid_master_versions = ["1.36.4-gke.1469000"] }
+  }
+}
+
+run "accepts_a_newer_minor_version" {
+  command = plan
+
+  override_data {
+    target = data.google_container_engine_versions.this
+    values = { valid_master_versions = ["1.37.0-gke.1000"] }
+  }
+}
+
+run "rejects_one_build_below_the_minimum" {
+  command = plan
+
+  override_data {
+    target = data.google_container_engine_versions.this
+    values = { valid_master_versions = ["1.36.4-gke.1468999"] }
+  }
+
+  expect_failures = [data.google_container_engine_versions.this]
 }
 
 run "rejects_versions_too_old_for_a_poolless_cluster" {

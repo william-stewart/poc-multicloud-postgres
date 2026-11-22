@@ -59,6 +59,32 @@ run "wires_settings_network_and_key" {
   }
 }
 
+# Values later stacks and scripts depend on.
+run "outputs_match_what_downstream_expects" {
+  command = plan
+
+  assert {
+    condition     = output.oidc_issuer_url == "https://container.googleapis.com/v1/projects/poc-test-project/locations/us-central1-a/clusters/poc-mcpg"
+    error_message = "oidc_issuer_url must be GKE's issuer for this cluster."
+  }
+
+  # Same pattern as 30-data/aws's gke_oidc_issuer_url validation.
+  assert {
+    condition     = can(regex("^https://container\\.googleapis\\.com/v1/projects/[a-z][a-z0-9-]{4,28}[a-z0-9]/locations/[a-z0-9-]+/clusters/[a-z0-9-]+$", output.oidc_issuer_url))
+    error_message = "oidc_issuer_url must be accepted by 30-data/aws's gke_oidc_issuer_url validation."
+  }
+
+  assert {
+    condition     = output.pods_cidr == "10.21.0.0/16" && output.workload_identity_pool == "poc-test-project.svc.id.goog"
+    error_message = "k8s/ needs the pod range (Cilium native routing) and the Workload Identity pool."
+  }
+
+  assert {
+    condition     = google_kms_crypto_key_iam_member.gke_secrets.crypto_key_id == "projects/poc-test-project/locations/us-central1/keyRings/poc-mcpg-gke/cryptoKeys/poc-mcpg-gke-secrets"
+    error_message = "The GKE service agent must be granted the key from 00-bootstrap/gcp."
+  }
+}
+
 run "requires_an_api_allowlist" {
   command = plan
 

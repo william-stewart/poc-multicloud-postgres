@@ -66,6 +66,11 @@ run "ingress_denied_by_default" {
     )
     error_message = "A lowest-priority, logged deny-all ingress rule must exist."
   }
+
+  assert {
+    condition     = google_compute_firewall.deny_all_ingress.source_ranges == toset(["0.0.0.0/0"]) && length(google_compute_firewall.deny_all_ingress.log_config) == 1
+    error_message = "The deny rule must cover every source and be logged."
+  }
 }
 
 run "nat_uses_reserved_ip_for_node_subnet_only" {
@@ -84,6 +89,40 @@ run "nat_uses_reserved_ip_for_node_subnet_only" {
   assert {
     condition     = google_compute_router_nat.this.log_config[0].enable
     error_message = "NAT error logging must be on."
+  }
+}
+
+run "nat_translates_the_node_subnet_through_the_reserved_ip" {
+  # apply (against mocks) so IDs and self links are known and can be compared.
+  command = apply
+
+  override_resource {
+    target = google_compute_address.nat
+    values = { self_link = "https://www.googleapis.com/compute/v1/projects/poc-test-project/regions/us-central1/addresses/test-nat", address = "203.0.113.20" }
+  }
+
+  override_resource {
+    target = google_compute_subnetwork.nodes
+    values = { id = "projects/poc-test-project/regions/us-central1/subnetworks/test-nodes" }
+  }
+
+  assert {
+    condition     = google_compute_router_nat.this.nat_ips == toset(["https://www.googleapis.com/compute/v1/projects/poc-test-project/regions/us-central1/addresses/test-nat"])
+    error_message = "Cloud NAT must use only the reserved address."
+  }
+
+  assert {
+    condition = (
+      length(google_compute_router_nat.this.subnetwork) == 1 &&
+      one(google_compute_router_nat.this.subnetwork).name == "projects/poc-test-project/regions/us-central1/subnetworks/test-nodes" &&
+      one(google_compute_router_nat.this.subnetwork).source_ip_ranges_to_nat == toset(["ALL_IP_RANGES"])
+    )
+    error_message = "Cloud NAT must translate the node subnet, including its pod range (ALL_IP_RANGES), and nothing else."
+  }
+
+  assert {
+    condition     = google_compute_address.nat.address_type == "EXTERNAL" && output.nat_egress_ips == tolist(["203.0.113.20"])
+    error_message = "nat_egress_ips must be the reserved external address; 30-data/aws limits the S3 reader to it."
   }
 }
 
