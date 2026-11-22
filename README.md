@@ -33,11 +33,11 @@ flowchart TB
   app -- "5432 only" --> primary
   primary -- "WAL every ≤60s + base backups<br/>IRSA writer role" --> vpce
   vpce --> s3
-  s3 -- "read-only HTTPS, this IP only<br/>role via GKE's OIDC issuer, no key" --> nat
+  s3 -- "read-only HTTPS, this IP only<br/>role via GKE's OIDC issuer" --> nat
   nat --> replica
-  replica -- "every replayed WAL + base backups<br/>Workload Identity, no key" --> gcs
+  replica -- "every replayed WAL + base backups<br/>Workload Identity" --> gcs
   app2 -- "5432 only<br/>read-only until promoted" --> replica
-  gcs -. "read-only, after a switchover<br/>Workload Identity Federation, no key" .-> primary
+  gcs -. "read-only, after a switchover<br/>Workload Identity Federation" .-> primary
 ```
 
 In this scenario we are replicating the WAL objects instead of using a site-to-site VPN. The replica's lag is
