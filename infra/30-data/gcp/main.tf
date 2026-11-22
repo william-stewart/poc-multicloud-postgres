@@ -134,8 +134,9 @@ resource "google_storage_bucket_iam_member" "writer" {
 resource "google_iam_workload_identity_pool_provider" "eks" {
   workload_identity_pool_id          = local.eks_pool_id
   workload_identity_pool_provider_id = local.eks_provider_id
-  display_name                       = "EKS ${local.eks_issuer_id}"
-  description                        = "Service account tokens of the ${local.name} EKS cluster"
+  # GCP caps display names at 32 characters; the provider ID is exactly 32.
+  display_name = local.eks_provider_id
+  description  = "Service account tokens of the ${local.name} EKS cluster"
 
   # Only pg-primary's service account; any other token from the cluster is
   # rejected at the exchange.

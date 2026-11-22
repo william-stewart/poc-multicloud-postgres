@@ -118,6 +118,83 @@ run "eks_reader_is_only_pg_primary_and_read_only" {
   }
 }
 
+# The token pg-primary presents is the IRSA token EKS mounts: audience
+# sts.amazonaws.com, at the IRSA path. Provider and credential config must
+# agree with that, or the exchange fails at runtime.
+run "eks_reader_uses_the_irsa_token" {
+  command = plan
+
+  assert {
+    condition     = google_iam_workload_identity_pool_provider.eks.oidc[0].allowed_audiences == tolist(["sts.amazonaws.com"])
+    error_message = "The EKS provider must accept the IRSA token's audience."
+  }
+
+  assert {
+    condition     = google_iam_workload_identity_pool_provider.eks.attribute_mapping == tomap({ "google.subject" = "assertion.sub" })
+    error_message = "google.subject must be the token's sub, which the read grant's principal names."
+  }
+
+  assert {
+    condition = (
+      jsondecode(output.eks_reader_credential_config).credential_source.file == "/var/run/secrets/eks.amazonaws.com/serviceaccount/token" &&
+      jsondecode(output.eks_reader_credential_config).type == "external_account" &&
+      jsondecode(output.eks_reader_credential_config).token_url == "https://sts.googleapis.com/v1/token"
+    )
+    error_message = "The credential configuration must read the IRSA token file and use Google's STS."
+  }
+}
+
+# Lookups of what 00-bootstrap/gcp creates. Its tests pin the same names.
+run "finds_the_bootstrap_key" {
+  command = plan
+
+  assert {
+    condition     = data.google_kms_key_ring.wal.name == "poc-mcpg-wal" && data.google_kms_key_ring.wal.location == "us-central1" && data.google_kms_crypto_key.wal.name == "poc-mcpg-wal"
+    error_message = "The WAL key lookup must match the key ring and key 00-bootstrap/gcp creates."
+  }
+}
+
+# GCP rejects these at apply time; mocks don't, so check them here.
+run "names_fit_gcp_limits" {
+  command = plan
+
+  assert {
+    condition = (
+      can(regex("^[a-z0-9-]{4,32}$", google_iam_workload_identity_pool_provider.eks.workload_identity_pool_provider_id)) &&
+      !startswith(google_iam_workload_identity_pool_provider.eks.workload_identity_pool_provider_id, "gcp-")
+    )
+    error_message = "The provider ID must be 4-32 characters of [a-z0-9-], not starting with gcp-."
+  }
+
+  assert {
+    condition     = length(google_iam_workload_identity_pool_provider.eks.display_name) <= 32
+    error_message = "The provider display name must be at most 32 characters."
+  }
+
+  assert {
+    condition     = can(regex("^[a-z]([-a-z0-9]{4,28}[a-z0-9])$", google_service_account.writer.account_id))
+    error_message = "The writer service account ID must be 6-30 characters ([a-z][-a-z0-9]*[a-z0-9])."
+  }
+
+  assert {
+    condition     = length(google_storage_bucket.wal.name) <= 63
+    error_message = "Bucket names must be at most 63 characters."
+  }
+}
+
+run "bucket_names_fit_with_the_longest_project_id" {
+  command = plan
+
+  variables {
+    project_id = "a23456789012345678901234567890"
+  }
+
+  assert {
+    condition     = length(google_storage_bucket.wal.name) <= 63
+    error_message = "Bucket names must be at most 63 characters, even for a 30-character project ID."
+  }
+}
+
 run "rejects_a_non_eks_issuer" {
   command = plan
 
