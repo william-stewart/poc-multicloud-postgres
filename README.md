@@ -10,7 +10,7 @@ Kubernetes clusters run Cilium as their only CNI, with default-deny network poli
 and Flux reconciles everything inside them from this repo.
 
 ```mermaid
-flowchart LR
+flowchart TB
   subgraph AWS["AWS · us-east-1 · VPC 10.10.0.0/16"]
     subgraph EKS["EKS 1.36 · Bottlerocket · Cilium only (no VPC CNI, no kube-proxy)"]
       app["namespace app"]
@@ -40,7 +40,7 @@ flowchart LR
   gcs -. "read-only, after a switchover<br/>Workload Identity Federation, no key" .-> primary
 ```
 
-There is no network path between the clouds, so there is no VPN. The replica's lag is
+In this scenario we are replicating the WAL objects instead of using a site-to-site VPN. The replica's lag is
 bounded by the primary's `archive_timeout` (60s).
 
 ## Tested by breaking it
