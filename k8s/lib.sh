@@ -17,6 +17,9 @@ require_tools() {
 # Refuse to touch a cluster other than the one infra/20-clusters/<cloud> built.
 check_cluster_context() {
   local cloud=$1 endpoint server
+  # kubectl reaches GKE through this credential plugin; without it every
+  # command fails with "executable gke-gcloud-auth-plugin not found".
+  if [[ $cloud == gcp ]]; then require_tools gke-gcloud-auth-plugin; fi
   endpoint=$(tofu -chdir="infra/20-clusters/$cloud" output -raw cluster_endpoint)
   server=$(kubectl config view --minify --context "$context" -o jsonpath='{.clusters[0].cluster.server}')
   if [[ ${server%/} != "${endpoint%/}" ]]; then

@@ -27,7 +27,14 @@ layer below it by name, so the order matters in both directions.
   `gcloud auth application-default login`.
 - Tools: `tofu`, `aws` (v2), `gcloud` with `gke-gcloud-auth-plugin`, `kubectl`, `helm`,
   `flux`, `cilium`, `hubble`, the `kubectl cnpg` plugin and `gh`. Versions used for
-  development are in `.tool-versions`.
+  development are in `.tool-versions`. On macOS:
+
+  ```sh
+  brew install opentofu awscli kubectl helm fluxcd/tap/flux cilium-cli hubble kubectl-cnpg gh
+  brew install --cask google-cloud-sdk
+  gcloud components install gke-gcloud-auth-plugin
+  gke-gcloud-auth-plugin --version   # must be on PATH: kubectl needs it for GKE
+  ```
 - Flux reads this private repo with a **read-only deploy key**. Create it once; the
   private half stays under `secrets/`, which is gitignored:
 
