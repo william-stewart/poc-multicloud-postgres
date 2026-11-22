@@ -18,6 +18,14 @@ path between them, at the cost of lag. While healthy, the replica trails by up t
 `archive_timeout` (60s), so an unplanned failover loses about a minute of writes; if
 the primary can't reach S3, the lag grows for as long as the outage lasts.
 
+Each cloud reads the other's bucket with no stored keys. AWS IAM trusts GKE's OIDC
+issuer, so `pg-replica`'s Kubernetes service account token is exchanged at AWS STS for
+a read-only role ([AWS's guide to the same pattern from GCP](https://aws.amazon.com/blogs/security/access-aws-using-a-google-cloud-platform-native-workload-identity/)).
+In the other direction, a GCP Workload Identity Federation pool trusts EKS's OIDC
+issuer, so `pg-primary`'s token is exchanged at Google STS for read access to the GCS
+bucket ([Workload Identity Federation with Kubernetes](https://docs.cloud.google.com/iam/docs/workload-identity-federation-with-kubernetes)).
+Each trust accepts only that one service account, and every credential is short-lived.
+
 ## Testing failure scenarios
 
 `make e2e` runs the real manifests on a local cluster, then kills the primary pod, takes
