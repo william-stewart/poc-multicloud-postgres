@@ -47,6 +47,7 @@ case $cloud in
       echo "WAL_WRITER_ROLE_ARN=$(tofu -chdir=infra/30-data/aws output -raw wal_writer_role_arn)"
       echo "WAL_BUCKET_REGION=$(tofu -chdir=infra/30-data/aws output -raw wal_bucket_region)"
       echo "GCS_WAL_BUCKET=$(tofu -chdir=infra/30-data/gcp output -raw wal_bucket)"
+      echo "GCP_PROJECT_ID=$(tofu -chdir=infra/30-data/gcp output -raw project_id)"
     } >"$vars"
     # Not a secret (it names a token file and a provider), but the Barman
     # Cloud plugin only reads GCS credentials from a Secret.

@@ -85,6 +85,12 @@ patches:
             name: s3-emulator
             key: ACCESS_SECRET_KEY
   - target:
+      kind: ObjectStore
+      name: gcs-store-ro
+    patch: |-
+      - op: remove
+        path: /spec/instanceSidecarConfiguration/env
+  - target:
       kind: Cluster
     patch: |-
       - op: remove

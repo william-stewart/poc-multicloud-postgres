@@ -25,6 +25,13 @@ spec:
       limits:
         cpu: 500m
         memory: 512Mi
+    # Google's client library needs a project as well as a credential. On GKE
+    # it reads one from the metadata server; on EKS nothing provides it, and
+    # every read fails with "Project was not passed and could not be
+    # determined from the environment" (found in the first live drill).
+    env:
+      - name: GOOGLE_CLOUD_PROJECT
+        value: ${GCP_PROJECT_ID}
   configuration:
     destinationPath: gs://${GCS_WAL_BUCKET}/
     googleCredentials:

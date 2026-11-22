@@ -142,6 +142,13 @@ run "eks_reader_uses_the_irsa_token" {
     )
     error_message = "The credential configuration must read the IRSA token file and use Google's STS."
   }
+
+  # A credential alone isn't enough off GCP: Google's client library also
+  # needs a project, and on EKS only make data-vars provides it.
+  assert {
+    condition     = output.project_id == "poc-test-project"
+    error_message = "project_id must be output, so make data-vars can give pg-primary's GCS client its project."
+  }
 }
 
 # Lookups of what 00-bootstrap/gcp creates. Its tests pin the same names.
