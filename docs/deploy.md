@@ -112,7 +112,8 @@ one the stack built. It then:
 2. installs Cilium with Helm; on EKS it then scales the node group to `node_count`
    and waits for the nodes to register
 3. waits for the Cilium agents, the operator and the nodes to be `Ready`; on EKS it
-   then installs CoreDNS, because Flux can't resolve `github.com` without it
+   then installs CoreDNS, because Flux can't resolve `github.com` without it, and
+   restarts Hubble Relay and Hubble UI, which started before DNS worked
 4. installs Flux with the deploy key and points it at `k8s/clusters/<cloud>`
 
 Flux takes over the Cilium and CoreDNS releases (same versions and values files) and
