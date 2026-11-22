@@ -77,12 +77,56 @@ run "subnet_layout" {
   }
 }
 
+# Checked on the subnets the VPC module actually creates, not on the locals
+# passed to it: network-lookup/aws finds them by these tags.
 run "subnets_tagged_for_lookup" {
   command = plan
 
   assert {
-    condition     = local.private_subnet_tags.tier == "private" && local.public_subnet_tags.tier == "public"
-    error_message = "Subnets must carry the tier tag that network-lookup/aws filters on."
+    condition     = length(module.vpc.private_subnet_objects) == 3 && alltrue([for s in module.vpc.private_subnet_objects : s.tags.tier == "private"])
+    error_message = "Every private subnet must carry tier = private, which network-lookup/aws filters on."
+  }
+
+  assert {
+    condition     = length(module.vpc.public_subnet_objects) == 3 && alltrue([for s in module.vpc.public_subnet_objects : s.tags.tier == "public"])
+    error_message = "Every public subnet must carry tier = public."
+  }
+
+  assert {
+    condition = (
+      alltrue([for s in module.vpc.private_subnet_objects : s.tags["kubernetes.io/role/internal-elb"] == "1"]) &&
+      alltrue([for s in module.vpc.public_subnet_objects : s.tags["kubernetes.io/role/elb"] == "1"])
+    )
+    error_message = "Subnets must carry the load balancer role tags."
+  }
+
+  assert {
+    condition     = module.vpc.name == "test"
+    error_message = "The VPC's Name tag (the module's name) must equal name; network-lookup/aws finds the VPC by it."
+  }
+}
+
+run "subnets_are_created_as_planned" {
+  command = plan
+
+  assert {
+    condition     = [for s in module.vpc.private_subnet_objects : s.cidr_block] == local.private_subnets && [for s in module.vpc.public_subnet_objects : s.cidr_block] == local.public_subnets
+    error_message = "The VPC module must create the planned CIDRs."
+  }
+
+  assert {
+    condition     = [for s in module.vpc.private_subnet_objects : s.availability_zone] == ["us-east-1b", "us-east-1c", "us-east-1a"]
+    error_message = "Subnet i must be in zone_ids[i]."
+  }
+
+  assert {
+    condition     = alltrue([for s in concat(module.vpc.private_subnet_objects, module.vpc.public_subnet_objects) : s.map_public_ip_on_launch != true])
+    error_message = "No subnet may hand out public IPs automatically."
+  }
+
+  assert {
+    condition     = length(module.vpc.natgw_ids) == 1
+    error_message = "The PoC uses exactly one NAT gateway."
   }
 }
 
@@ -109,8 +153,40 @@ run "s3_traffic_skips_nat" {
   }
 }
 
+run "s3_endpoint_serves_private_subnets" {
+  # apply (against mocks) so route table IDs are known and can be compared.
+  command = apply
+
+  # Mocks give every resource of a type the same random ID, which would make
+  # private and public route tables indistinguishable. Pin distinct IDs.
+  override_resource {
+    target = module.vpc.aws_route_table.private
+    values = { id = "rtb-private" }
+  }
+
+  override_resource {
+    target = module.vpc.aws_route_table.public
+    values = { id = "rtb-public" }
+  }
+
+  assert {
+    condition     = length(aws_vpc_endpoint.s3.route_table_ids) > 0 && aws_vpc_endpoint.s3.route_table_ids == toset(["rtb-private"])
+    error_message = "The S3 gateway endpoint must be on the private route tables, or WAL archiving goes through NAT (and the writer's VPCE condition denies it)."
+  }
+}
+
 run "flow_logs_encrypted" {
   command = plan
+
+  assert {
+    condition     = aws_kms_alias.flow_logs.name == "alias/test-vpc-flow-logs"
+    error_message = "Unexpected flow log key alias."
+  }
+
+  assert {
+    condition     = strcontains(aws_kms_key.flow_logs.policy, "\"logs.us-east-1.amazonaws.com\"")
+    error_message = "Only CloudWatch Logs in this region may use the flow log key."
+  }
 
   assert {
     condition     = aws_kms_key.flow_logs.enable_key_rotation
