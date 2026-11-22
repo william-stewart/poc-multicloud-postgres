@@ -29,13 +29,17 @@
 #   E2E_MONITORING=1
 #                also install Prometheus and Grafana from k8s/monitoring before
 #                the databases, so the dashboard records the whole run; open it
-#                with make e2e-grafana (with E2E_KEEP=1 it outlives the run)
+#                with make e2e-grafana (with E2E_KEEP=1 it outlives the run).
+#                Each scenario is marked on the dashboard as a labeled region.
 set -euo pipefail
 
 CONTEXT=${E2E_CONTEXT:-rancher-desktop}
 KEEP=${E2E_KEEP:-0}
 MONITORING=${E2E_MONITORING:-0}
 MONITORING_RELEASE=k8s/monitoring/kube-prometheus-stack/helmrelease.yaml
+# With monitoring on: the run's own port-forward to Grafana, its admin login
+# (user:password, never written to disk), and the open scenario's region.
+grafana_url="" grafana_login="" forward_pid="" annotation_id=""
 NS=cnpg-db
 cd "$(git rev-parse --show-toplevel)"
 
@@ -170,6 +174,8 @@ finish() {
   local code=$?
   trap - EXIT
   if [[ $scenario != clean ]]; then
+    mark_scenario || true
+    disconnect_grafana || true
     if ((code != 0)) && ((failures == 0)); then
       record "run aborted (exit $code)" FAIL
     elif ((failures == 0)) && [[ $scenario != finished ]]; then
@@ -251,9 +257,76 @@ install_monitoring() {
   fi
   if kc apply -k k8s/monitoring/config >/dev/null; then
     echo "Dashboard: run make e2e-grafana in another terminal, then open http://localhost:3000/d/postgres-dr"
+    connect_grafana
   else
     echo "warning: couldn't apply k8s/monitoring/config; the dashboard will be empty" >&2
   fi
+}
+
+# --- Scenario marks on the dashboard -----------------------------------------
+# Best effort: if Grafana can't be reached, the run goes on unmarked.
+
+grafana_api() { # method path [json]
+  local args=(-fsS -X "$1" -H 'Content-Type: application/json')
+  if [[ $# -gt 2 ]]; then args+=(--data "$3"); fi
+  # The login goes through a file descriptor, not the command line.
+  curl "${args[@]}" --config <(printf 'user = "%s"\n' "$grafana_login") "$grafana_url$2"
+}
+
+connect_grafana() {
+  local user password forward_log port
+  if ! user=$(kc -n monitoring get secret kube-prometheus-stack-grafana -o jsonpath='{.data.admin-user}' | base64 --decode) ||
+    ! password=$(kc -n monitoring get secret kube-prometheus-stack-grafana -o jsonpath='{.data.admin-password}' | base64 --decode); then
+    echo "warning: no Grafana login found; scenarios won't be marked on the dashboard" >&2
+    return 0
+  fi
+  forward_log=$(mktemp)
+  kc -n monitoring port-forward svc/kube-prometheus-stack-grafana :80 >"$forward_log" 2>&1 &
+  forward_pid=$!
+  if wait_until 30 grep -q '^Forwarding from 127\.0\.0\.1:' "$forward_log"; then
+    port=$(sed -n 's/^Forwarding from 127\.0\.0\.1:\([0-9]*\) .*/\1/p' "$forward_log" | head -1)
+    grafana_url=http://127.0.0.1:$port
+    grafana_login=$user:$password
+  fi
+  rm -f "$forward_log"
+  if [[ -z $grafana_url ]] || ! wait_until 120 grafana_api GET /api/health; then
+    echo "warning: can't reach Grafana; scenarios won't be marked on the dashboard" >&2
+    disconnect_grafana
+  fi
+}
+
+disconnect_grafana() {
+  if [[ -n $forward_pid ]]; then
+    kill "$forward_pid" 2>/dev/null || true
+    wait "$forward_pid" 2>/dev/null || true
+  fi
+  forward_pid="" grafana_url="" grafana_login=""
+}
+
+# Closes the open scenario's region, then opens one for the named scenario
+# (none when called without a name, at the end of the run).
+mark_scenario() { # [name]
+  [[ -n $grafana_url ]] || return 0
+  local now_ms body
+  now_ms=$(python3 -c 'import time; print(int(time.time() * 1000))')
+  if [[ -n $annotation_id ]]; then
+    grafana_api PATCH "/api/annotations/$annotation_id" "{\"timeEnd\": $now_ms}" >/dev/null 2>&1 || true
+    annotation_id=""
+  fi
+  [[ $# -gt 0 ]] || return 0
+  body=$(python3 -c 'import json, sys; t = int(sys.argv[1]); print(json.dumps({"time": t, "timeEnd": t, "tags": ["e2e"], "text": sys.argv[2]}))' "$now_ms" "$1")
+  if ! annotation_id=$(grafana_api POST /api/annotations "$body" 2>/dev/null |
+    python3 -c 'import json, sys; print(json.load(sys.stdin)["id"])' 2>/dev/null); then
+    annotation_id=""
+    echo "warning: Grafana refused a scenario mark; the rest of the run goes unmarked" >&2
+    disconnect_grafana
+  fi
+}
+
+begin_scenario() { # name
+  scenario=$1
+  log "$scenario"
+  mark_scenario "$scenario"
 }
 
 deploy_object_store() {
@@ -345,6 +418,7 @@ set_replica() { # cluster json-for-spec.replica
 
 deploy_databases() {
   scenario="0. deploy"
+  mark_scenario "$scenario"
   log "pg-primary (k8s/data/aws, emulated)"
   app_owner_secret
   apply_overlay test/e2e/manifests/primary
@@ -363,8 +437,7 @@ deploy_databases() {
 }
 
 test_replication() {
-  scenario="1. replication"
-  log "$scenario"
+  begin_scenario "1. replication"
   sql pg-primary "CREATE TABLE e2e (id bigserial PRIMARY KEY, mark text NOT NULL, at timestamptz NOT NULL DEFAULT now())" >/dev/null
   mark pg-primary replicated
   switch_wal pg-primary >/dev/null
@@ -375,8 +448,7 @@ test_replication() {
 }
 
 test_restore_from_gcp_copy() {
-  scenario="2. restore from the GCP copy"
-  log "$scenario"
+  begin_scenario "2. restore from the GCP copy"
   local target segment start
   mark pg-primary before-target
   target=$(sql pg-primary "SELECT to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS.US') || '+00'")
@@ -406,8 +478,7 @@ new_primary_takes_writes() {
 }
 
 test_kill_primary() {
-  scenario="3. kill the primary pod"
-  log "$scenario"
+  begin_scenario "3. kill the primary pod"
   old_primary=$(current_primary pg-primary)
   mark pg-primary before-kill
   local start
@@ -428,8 +499,7 @@ test_kill_primary() {
 }
 
 test_object_store_outage() {
-  scenario="4. object store outage"
-  log "$scenario"
+  begin_scenario "4. object store outage"
   local start down
   kc -n s3-emulator scale deployment/seaweedfs --replicas=0 >/dev/null
   kc -n s3-emulator wait --for=delete pod -l app=seaweedfs --timeout=2m >/dev/null 2>&1 || true
@@ -465,8 +535,7 @@ test_object_store_outage() {
 }
 
 test_switchover() {
-  scenario="5. planned switchover and back"
-  log "$scenario"
+  begin_scenario "5. planned switchover and back"
   local start token rows_at_demotion
   start=$(now)
   set_replica pg-primary '{"primary":"pg-replica"}'
@@ -517,8 +586,7 @@ test_switchover() {
 primary_fenced() { ! sql pg-primary "SELECT 1"; }
 
 test_unplanned_failover() {
-  scenario="6. unplanned failover"
-  log "$scenario"
+  begin_scenario "6. unplanned failover"
   local i start written=10 surviving
   # Steady writes with no WAL switch, as in production: only archive_timeout
   # (60s) ships them, so the last ones are what a sudden loss costs.

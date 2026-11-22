@@ -286,6 +286,11 @@ Grafana opens read-only without a login. The admin password is in the
 `monitoring/kube-prometheus-stack-grafana` Secret. Give the VM about 10 GB with
 monitoring on.
 
+The run marks each scenario on every panel as a region between dashed lines; hover over
+a line to see its name, or turn the marks off with the *End-to-end test scenarios*
+toggle. `run.sh` adds them through its own port-forward to Grafana, with the admin
+login from that Secret. If it can't reach Grafana, the run carries on unmarked.
+
 The dashboard, *PostgreSQL across clouds: recovery point and failover*, uses only
 metrics CloudNativePG and the Barman Cloud plugin already serve on each instance's
 port 9187. One PodMonitor scrapes them every 10s. Each scenario has its own shape:
