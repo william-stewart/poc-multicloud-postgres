@@ -1,0 +1,21 @@
+# Every CloudNativePG instance in cnpg-db serves metrics on its "metrics" port
+# (9187): the operator's default queries, the collector's own metrics and the
+# Barman Cloud plugin's backup metrics. The cluster label names the
+# CloudNativePG Cluster, so the dashboard can group pods by it.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: cnpg-instances
+  namespace: monitoring
+spec:
+  namespaceSelector:
+    matchNames:
+      - cnpg-db
+  selector:
+    matchLabels:
+      cnpg.io/podRole: instance
+  podMetricsEndpoints:
+    - port: metrics
+      relabelings:
+        - sourceLabels: [__meta_kubernetes_pod_label_cnpg_io_cluster]
+          targetLabel: cluster

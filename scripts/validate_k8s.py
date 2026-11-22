@@ -29,6 +29,8 @@ For each cloud:
 It also renders the end-to-end test's overlays (test/e2e/manifests), which
 adapt k8s/data to a local cluster, and validates them strictly the same way,
 so a change in k8s/data that breaks the end-to-end test fails here first.
+It also checks that every Grafana dashboard Flux applies is valid JSON with
+a uid.
 
 It also checks that bootstrap.sh installs the versions Flux manages, and that
 the Flux images pinned by digest match the generated Flux manifests.
@@ -77,8 +79,19 @@ def run(cmd: list[str], stdin: str | None = None) -> str:
     return result.stdout
 
 
+class Loader(yaml.SafeLoader):
+    """SafeLoader that reads a bare `=` as the string "=", as Kubernetes does.
+
+    PyYAML resolves `=` to the YAML 1.1 "value" type, which it can't
+    construct; the Prometheus Operator's CRDs list it as a relabeling enum.
+    """
+
+
+Loader.add_constructor("tag:yaml.org,2002:value", lambda loader, node: loader.construct_scalar(node))
+
+
 def load_docs(text: str) -> list[dict]:
-    return [d for d in yaml.safe_load_all(text) if d]
+    return [d for d in yaml.load_all(text, Loader=Loader) if d]
 
 
 # --- Variables -------------------------------------------------------------
@@ -293,7 +306,12 @@ def unknown_keys(values, schema, root: dict, path: str = "") -> list[str]:
 
 
 def render_helm_releases(docs: list[dict], cloud: str) -> list[tuple[str, str]]:
-    """Render every HelmRelease; return (label, manifests) pairs."""
+    """Render every HelmRelease; return (label, manifests) pairs.
+
+    Includes each chart's crds/ directory, for charts that ship their CRDs
+    there rather than as templates (kube-prometheus-stack), so the custom
+    resources that use them are validated strictly.
+    """
     repos = {(d["metadata"]["namespace"], d["metadata"]["name"]): d for d in docs if d.get("kind") == "HelmRepository"}
     configmaps = {(d["metadata"]["namespace"], d["metadata"]["name"]): d for d in docs if d.get("kind") == "ConfigMap"}
     rendered = []
@@ -326,6 +344,7 @@ def render_helm_releases(docs: list[dict], cloud: str) -> list[tuple[str, str]]:
             manifests = run([
                 "helm", "template", hr["spec"].get("releaseName", name), str(chart),
                 "--namespace", ns, "--kube-version", KUBERNETES_VERSION, "-f", f.name,
+                "--include-crds",
             ])
         rendered.append((f"helm template {ns}/{name} ({spec['chart']} {spec['version']})", manifests))
     return rendered
@@ -416,6 +435,18 @@ def check_postgres_images(clusters: list[tuple[str, dict]]) -> None:
         print(f"CloudNativePG Clusters share one digest-pinned PostgreSQL image ({len(images)})")
 
 
+def fully_fenced(cluster: dict) -> bool:
+    """Whether every instance of a CloudNativePG Cluster is fenced."""
+    annotation = (cluster.get("metadata", {}).get("annotations") or {}).get("cnpg.io/fencedInstances")
+    if annotation is None:
+        return False
+    try:
+        fenced = json.loads(annotation)
+    except json.JSONDecodeError as e:
+        raise Failure(f"Cluster {cluster['metadata']['name']}: cnpg.io/fencedInstances isn't a JSON list: {e}") from e
+    return isinstance(fenced, list) and "*" in fenced
+
+
 def check_distributed_topology(clusters: list[tuple[str, dict]]) -> None:
     """The CloudNativePG Clusters form one consistent distributed topology.
 
@@ -423,6 +454,9 @@ def check_distributed_topology(clusters: list[tuple[str, dict]]) -> None:
     serverName), replays from another member, and at most one names itself
     the primary. Two self-declared primaries would be two timelines: split
     brain. During a switchover both may name the other, which is safe.
+    A Cluster fenced in full (cnpg.io/fencedInstances: '["*"]') runs no
+    PostgreSQL, so it doesn't count: after an unplanned failover the old
+    primary is fenced, not demoted, because demoting it would restart it.
     """
     if len(clusters) < 2:
         return
@@ -446,7 +480,7 @@ def check_distributed_topology(clusters: list[tuple[str, dict]]) -> None:
             raise Failure(f"{label}: externalClusters must list exactly {sorted(names)}, found {sorted(external)}")
         if mismatched := sorted(n for n, server in external.items() if server != n):
             raise Failure(f"{label}: externalClusters {mismatched} must read the archive under their own name (serverName)")
-        if replica["primary"] == me:
+        if replica["primary"] == me and not fully_fenced(cluster):
             primaries.append(label)
         elif "promotionToken" in replica:
             raise Failure(f"{label}: promotionToken only belongs on the cluster being promoted, but replica.primary is {replica['primary']}")
@@ -532,6 +566,7 @@ def render_cloud(
 
         docs = load_docs(built)
         check_never_pruned(docs, f"{cloud}/{name} ({path})")
+        check_dashboards(docs, f"{cloud}/{name} ({path})")
         pg_clusters.extend(
             (f"{cloud}/{name}", d) for d in docs
             if d.get("kind") == "Cluster" and d.get("apiVersion", "").startswith("postgresql.cnpg.io/")
@@ -571,6 +606,20 @@ def check_e2e_overlays(schema_dir: Path) -> None:
         if "${" in manifests:
             raise Failure(f"test/e2e/manifests/{name} still has ${{VARS}} after rendering; emulate them in test/e2e/manifests/emulate")
         kubeconform(manifests, f"test/e2e/{name}", schema_dir)
+
+
+def check_dashboards(docs: list[dict], where: str) -> None:
+    """Grafana dashboards (ConfigMap keys ending in .json) parse and have a uid."""
+    for cm in (d for d in docs if d.get("kind") == "ConfigMap"):
+        for key, value in (cm.get("data") or {}).items():
+            if not key.endswith(".json"):
+                continue
+            try:
+                dashboard = json.loads(value)
+            except json.JSONDecodeError as e:
+                raise Failure(f"{where}: dashboard {key} isn't valid JSON: {e}") from e
+            if not dashboard.get("uid"):
+                raise Failure(f"{where}: dashboard {key} has no uid, so Grafana would duplicate it")
 
 
 def main() -> int:

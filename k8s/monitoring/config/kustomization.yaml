@@ -1,0 +1,17 @@
+# What Prometheus scrapes and what Grafana shows. Needs the Prometheus
+# Operator's CRDs, so it applies after the chart in ../kube-prometheus-stack.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - podmonitor.yaml
+
+# The Grafana sidecar loads every ConfigMap labeled grafana_dashboard: "1".
+generatorOptions:
+  disableNameSuffixHash: true
+  labels:
+    grafana_dashboard: "1"
+configMapGenerator:
+  - name: dashboard-postgres-dr
+    namespace: monitoring
+    files:
+      - postgres-dr.json=dashboards/postgres-dr.json

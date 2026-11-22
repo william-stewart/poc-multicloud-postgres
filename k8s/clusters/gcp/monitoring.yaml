@@ -1,0 +1,40 @@
+# Prometheus and Grafana (k8s/monitoring), then what they scrape and show
+# (k8s/monitoring/config). The second needs the Prometheus Operator's CRDs,
+# which the first installs, so it waits for it. Nothing here depends on the
+# data layer: Prometheus scrapes the instances once they exist, through the
+# allow rule in k8s/policies (rule 11).
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: monitoring
+  namespace: flux-system
+spec:
+  dependsOn:
+    - name: platform
+  interval: 10m
+  retryInterval: 2m
+  timeout: 15m
+  path: ./k8s/monitoring
+  prune: true
+  wait: true
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: monitoring-config
+  namespace: flux-system
+spec:
+  dependsOn:
+    - name: monitoring
+  interval: 10m
+  retryInterval: 2m
+  timeout: 5m
+  path: ./k8s/monitoring/config
+  prune: true
+  wait: true
+  sourceRef:
+    kind: GitRepository
+    name: flux-system

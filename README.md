@@ -10,38 +10,70 @@ Kubernetes clusters run Cilium as their only CNI, with default-deny network poli
 and Flux reconciles everything inside them from this repo.
 
 ```mermaid
-flowchart LR
-  subgraph AWS["AWS · us-east-1 · VPC 10.10.0.0/16"]
-    subgraph EKS["EKS 1.36 · Bottlerocket · Cilium only (no VPC CNI, no kube-proxy)"]
+flowchart TB
+  git{{"GitHub: this repo<br/>desired state, including which side is the primary"}}
+
+  subgraph AWS["AWS · us-east-1"]
+    subgraph EKS["EKS 1.36 · Bottlerocket · Cilium"]
       app["namespace app"]
       primary[("pg-primary<br/>2 instances · cnpg-db<br/>default deny + allow rules")]
     end
     vpce["S3 gateway endpoint"]
+    s3[\"S3 bucket · pg-primary/<br/>base backups + WAL<br/>versioned · KMS-encrypted · TLS only"/]
   end
 
-  s3[("S3 bucket · pg-primary/<br/>base backups + WAL<br/>versioned · KMS-encrypted · TLS only")]
-
-  subgraph GCP["GCP · us-central1 · nodes 10.20.0.0/20"]
-    subgraph GKE["GKE 1.36 · COS · Cilium only"]
+  subgraph GCP["GCP · us-central1"]
+    subgraph GKE["GKE 1.36 · COS · Cilium"]
       app2["namespace app"]
       replica[("pg-replica<br/>1 instance · cnpg-db<br/>replays WAL from S3<br/>default deny + allow rules")]
     end
     nat["Cloud NAT<br/>reserved IP"]
-    gcs[("GCS bucket · pg-replica/<br/>base backups + WAL<br/>versioned · CMEK")]
+    gcs[\"GCS bucket · pg-replica/<br/>base backups + WAL<br/>versioned · KMS-encrypted (CMEK)"/]
   end
 
+  git ~~~ AWS
+  EKS -- "Flux pulls" --> git
+  GKE -- "Flux pulls" --> git
   app -- "5432 only" --> primary
-  primary -- "WAL every ≤60s + base backups<br/>IRSA writer role" --> vpce
+  primary -- "writes WAL every ≤60s + base backups<br/>IRSA writer role" --> vpce
   vpce --> s3
-  s3 -- "read-only HTTPS, this IP only<br/>role via GKE's OIDC issuer, no key" --> nat
-  nat --> replica
-  replica -- "every replayed WAL + base backups<br/>Workload Identity, no key" --> gcs
+  replica -- "reads WAL<br/>role via GKE's OIDC issuer" --> nat
+  nat -- "read-only HTTPS, this IP only" --> s3
+  replica -- "writes every replayed WAL + base backups<br/>Workload Identity" --> gcs
   app2 -- "5432 only<br/>read-only until promoted" --> replica
-  gcs -. "read-only, after a switchover<br/>Workload Identity Federation, no key" .-> primary
+  primary -. "reads WAL, after a switchover<br/>Workload Identity Federation" .-> gcs
 ```
 
-There is no network path between the clouds, so there is no VPN. The replica's lag is
-bounded by the primary's `archive_timeout` (60s).
+Arrows point from the side that opens the connection, so every flow between the clouds
+leaves through its own cloud's edge and nothing listens for the other cloud. Dashed:
+used only after a switchover. Cylinders are databases, trapezoids are buckets.
+
+The clouds share no network. WAL travels through object storage instead of a
+site-to-site VPN or streaming replication, which keeps the clouds independent, with
+nothing to tunnel or peer, at the cost of lag. While both archives are healthy, the
+replica trails the primary by up to `archive_timeout` (60s) plus the time to upload and
+replay a segment, so an unplanned failover can lose about a minute of writes; `make e2e`
+measures it. If the primary can't reach its archive, the replica stops advancing, and
+the lag grows for as long as the outage lasts.
+
+## Tested by breaking it
+
+`make e2e` runs the real manifests on a local cluster, then kills the primary pod, takes
+the object store away, switches over to the replica and back, and fails over with the
+old primary fenced. Every scenario passes, and each run is recorded in
+[`evidence/e2e`](evidence/e2e) ([details](#end-to-end-test-on-a-local-cluster)). The
+same Grafana dashboard runs on both clouds:
+
+![The dashboard over a full end-to-end run: the roles swap during the switchover and
+back, pg-primary ends fenced, and WAL waits for the archive through the object store
+outage](evidence/e2e_grafana.png)
+
+*One full run ([its results](evidence/e2e/20261122T003509Z.md)), each scenario marked
+by dashed lines. Top left: a moment with no primary when the pod is killed, the swap to
+`pg-replica` and back, then the unplanned failover that leaves `pg-primary` fenced.
+Bottom left: WAL waits for the archive for about three minutes during the outage, and
+for about a minute before the fence, which is the writes the failover loses. Bottom
+right: the replica stays within two WAL segments of the primary.*
 
 ## Deploy
 
@@ -151,7 +183,9 @@ one the stack built. It then:
 
 Flux takes over the Cilium and CoreDNS releases (same versions and values files) and
 installs cert-manager, the CloudNativePG operator, the Barman Cloud plugin and, on EKS,
-the EBS CSI driver.
+the EBS CSI driver. Then it installs Prometheus and Grafana (`k8s/monitoring`) and the
+PostgreSQL dashboard, which fills in once the databases exist (see
+[Dashboard](#dashboard)).
 
 ```sh
 flux --context "$EKS" get helmreleases -A          # all Ready
@@ -248,7 +282,7 @@ E2E_KEEP=1 make e2e         # leave it running for inspection; make e2e-clean re
 | 3 | Kill the primary pod | The other instance takes writes; no committed row is lost; archiving continues | Failover time |
 | 4 | Object store outage | Writes continue; CloudNativePG reports archiving failing; the replica catches up afterwards | Time to detect, time to catch up |
 | 5 | Planned switchover and back | Promotion tokens, no row lost, replication in both directions | Switchover time each way |
-| 6 | Unplanned failover | The fenced primary refuses connections; `pg-replica` takes writes | Failover time, rows lost (RPO) |
+| 6 | Unplanned failover | The fenced primary refuses connections, and still does 60s later; `pg-replica` takes writes | Failover time, rows lost (RPO) |
 
 Each run writes its results to `evidence/e2e/<UTC time>.md`; commit that file as the
 record of the run. A failed run also saves cluster state and logs under
@@ -268,6 +302,46 @@ The script only runs against a context whose API server is on `localhost`, so it
 can't touch a cloud cluster. It needs `kubectl`, `helm`, `kustomize`, `python3` and
 `openssl`. Give Rancher Desktop's VM 4 CPUs and 8 GB (Preferences > Virtual Machine);
 with less, the four PostgreSQL pods may wait for resources.
+
+### Watching a run in Grafana
+
+`E2E_MONITORING=1` also installs Prometheus and Grafana (`k8s/monitoring`) before the
+databases, so the dashboard covers the whole run:
+
+```sh
+E2E_MONITORING=1 E2E_KEEP=1 make e2e   # in one terminal; keep it so Grafana outlives the run
+make e2e-grafana                       # in another, once the run prints "Dashboard:"
+open http://localhost:3000/d/postgres-dr
+```
+
+Grafana opens read-only without a login. The admin password is in the
+`monitoring/kube-prometheus-stack-grafana` Secret. Give the VM about 10 GB with
+monitoring on.
+
+The screenshot under [Tested by breaking it](#tested-by-breaking-it) shows a run
+opened this way. The run marks each scenario on every panel as a region between dashed lines; hover over
+a line to see its name, or turn the marks off with the *End-to-end test scenarios*
+toggle. `run.sh` adds them through its own port-forward to Grafana, with the admin
+login from that Secret. If it can't reach Grafana, the run carries on unmarked.
+
+The dashboard, *PostgreSQL across clouds: recovery point and failover*, uses only
+metrics CloudNativePG and the Barman Cloud plugin already serve on each instance's
+port 9187. One PodMonitor scrapes them every 10s. Each scenario has its own shape:
+
+| Panel | What it shows | Where the scenarios show up |
+| --- | --- | --- |
+| Role of each Cluster | Primary, replica, no primary (should be primary, nothing accepts writes) or fenced | 3: a few seconds of no primary. 5: the roles swap and swap back. 6: `pg-replica` turns primary, `pg-primary` fenced |
+| PostgreSQL up, per instance | Whether each pod's PostgreSQL answers | 3: the killed pod drops out and comes back |
+| How long closed WAL has waited for the archive | Per Cluster: 0 unless a closed segment is waiting, then the time since the archive last accepted one. An idle database stays at 0 | 4: the primary's line climbs until the store is back |
+| WAL segments the replica's archive trails the primary's | The cross-cloud lag, for whichever Cluster is in replica mode | 1: it rises until the replica replays the new segment. 4 stops both archives, so it stays flat |
+| WAL segments waiting to be archived | `.ready` files piling up on the WAL volume | 4: they pile up during the outage, then drain |
+| Failed archive attempts | Per minute | 4 |
+| Last base backup, restorable back to | Per archive, from the Barman Cloud plugin: how long ago the newest backup completed, and the earliest point it can restore to | 0: both archives get their first backup |
+| Rows written per minute | Inserts, updates and deletes in `app`, per Cluster | Where each scenario's writes land |
+
+In the end-to-end test both archives are the same local S3 server and replication
+crosses no network, so the lag is shorter than on the clouds. Flux installs the same
+stack and dashboard on EKS and GKE (see [Dashboard](#dashboard)).
 
 ## Verify
 
@@ -296,6 +370,8 @@ kubectl cnpg status pg-replica -n cnpg-db --context "$GKE"
 
 # Network policies: watch for drops while forcing a WAL switch and a backup.
 hubble observe -n cnpg-db --verdict DROPPED -f
+# The same flows as a live service map, allowed and dropped (Hubble UI, opens a browser):
+cilium --context "$EKS" hubble ui
 # No access from other namespaces (times out):
 kubectl --context "$EKS" run nettest --rm -it --restart=Never -n default --image=postgres:18 -- \
   pg_isready -h pg-primary-rw.cnpg-db -t 5
@@ -309,6 +385,24 @@ kubectl --context "$GKE" run nettest --rm -it --restart=Never -n app --image=pos
   pg_isready -h pg-replica-rw.cnpg-db -t 5
 ```
 
+### Dashboard
+
+Flux runs Prometheus and Grafana on each cluster, with the same chart, values and
+dashboard as `make e2e`. Each Grafana shows its own cluster's Cluster: `pg-primary`
+on EKS, `pg-replica` on GKE. There is no network path between the clouds, so open
+both side by side to see the whole topology:
+
+```sh
+make grafana CONTEXT="$EKS"              # http://localhost:3000/d/postgres-dr
+make grafana CONTEXT="$GKE" PORT=3001    # in another terminal: http://localhost:3001/d/postgres-dr
+```
+
+Grafana opens read-only without a login, and only through the port-forward; the admin
+password is in the `monitoring/kube-prometheus-stack-grafana` Secret. Prometheus keeps
+two days of data, on an emptyDir volume, so a restart of its pod loses it. Prometheus
+reaches the instances' metrics port through rule 11 below; without it, default deny
+drops every scrape.
+
 ## Switchover, failover and failback
 
 `pg-primary` and `pg-replica` are the two members of one CloudNativePG
@@ -317,7 +411,8 @@ kubectl --context "$GKE" run nettest --rm -it --restart=Never -n app --image=pos
 `spec.replica.primary` names the one primary. Every role change is a commit to
 `replica.primary` in `k8s/data/aws/cluster.yaml` and `k8s/data/gcp/cluster.yaml`, which
 Flux applies. `make validate` rejects any commit in which both name themselves the
-primary.
+primary, unless one of them is fenced in full (see
+[Unplanned failover](#unplanned-failover-aws-is-lost)).
 
 This replaces the plain `replica.enabled: false` promotion: with it, the operator
 demotes the old primary cleanly and hands over a promotion token, so a planned
@@ -353,8 +448,11 @@ old `promotionToken` in the commit that demotes `pg-replica` again.
 1. **Promote `pg-replica` and fence `pg-primary`, in one commit:**
    - `k8s/data/gcp/cluster.yaml`: `replica.primary: pg-replica`, with no token. It
      promotes at once, at the last WAL it replayed.
-   - `k8s/data/aws/cluster.yaml`: `replica.primary: pg-replica`, and the annotation
-     `cnpg.io/fencedInstances: '["*"]'` on `pg-primary`.
+   - `k8s/data/aws/cluster.yaml`: only the annotation
+     `cnpg.io/fencedInstances: '["*"]'` on `pg-primary`. Leave `replica.primary`
+     as it is: demoting `pg-primary` restarts it, and CloudNativePG lifts the fence
+     during that restart (`make e2e` showed it). `make validate` accepts both
+     clusters naming themselves the primary only while one is fenced in full.
 
 2. **Move clients** to the `app` namespace on GKE, as above.
 
@@ -363,8 +461,9 @@ up to `archive_timeout` (60s) plus however far the replica was behind.
 
 **Fencing.** When EKS comes back, Flux's first reconcile applies the fence, and
 CloudNativePG stops PostgreSQL in every `pg-primary` instance: it accepts no
-connections and archives nothing more. Demotion alone isn't enough, because a primary
-that was failed over without a token has diverged and can't follow the new one.
+connections and archives nothing more. Demotion wouldn't help, because a primary
+that was failed over without a token has diverged and can't follow the new one, and
+it lifts the fence.
 What this doesn't cover is the gap between EKS returning and Flux reconciling: the old
 instances can start as primary for that window. Anything written then is lost, but it
 only ever reaches `pg-primary/` in S3, never `pg-replica`'s archive, so the new
@@ -394,7 +493,7 @@ aws s3 mv --recursive "s3://$bucket/pg-primary/" "s3://$bucket/pg-primary-diverg
 
 4. Commit to `k8s/data/aws/cluster.yaml`: replace `bootstrap.initdb` with
    `bootstrap.recovery` from `pg-replica` (same `database`, `owner` and `secret`),
-   remove the fence annotation, and keep `replica.primary: pg-replica`.
+   remove the fence annotation, and set `replica.primary: pg-replica`.
 5. `flux --context "$EKS" resume kustomization data`. `pg-primary` is recreated from
    GCS as a replica of `pg-replica`.
 6. Once it has caught up, run a planned switchover back to AWS. Then restore
@@ -579,6 +678,7 @@ depends on `policies`), so no database pod ever runs unprotected:
 | 8 | Egress | Database pods → `storage.googleapis.com` | 443 | GKE |
 | 9 | Egress | Database pods → GKE metadata server (Workload Identity tokens) | 80 | GKE |
 | 10 | Egress | Database pods → `sts.googleapis.com`, `storage.googleapis.com` | 443 | EKS |
+| 11 | Ingress | Prometheus (namespace `monitoring`) → instances' metrics | 9187 | Both |
 
 **Shared settings and module interfaces.** `infra/modules/settings` holds the values
 both clouds share (names, regions, zones, address plan, Kubernetes version, node OS,
@@ -612,6 +712,7 @@ stack's state file.
 | `k8s/platform` | Cilium, CoreDNS, cert-manager, CloudNativePG, Barman plugin, EBS CSI |
 | `k8s/data` | The PostgreSQL clusters, object stores and backups |
 | `k8s/policies` | Default deny and Cilium allow rules for `cnpg-db` |
+| `k8s/monitoring` | Prometheus, Grafana, the PodMonitor and the PostgreSQL dashboard (Flux on both clusters, and `make e2e`) |
 | `k8s/*.sh` | `bootstrap.sh`, `data-vars.sh`, `app-credentials.sh` (run through `make`) |
 | `test/e2e` | The local end-to-end test (`make e2e`) and its overlays of `k8s/data` |
 | `evidence/e2e` | Results of end-to-end runs |
@@ -654,7 +755,8 @@ token and no cloud credentials.
   unplanned failover (rebuilding from the other archive) isn't in `make e2e` yet.
 - A fence that doesn't depend on the old primary's cluster reconciling first, and
   client routing across clouds (DNS that follows the primary).
-- Alerts on archive failures and replica lag; regional, multi-AZ clusters; one NAT
-  gateway per AZ.
+- One Grafana across both clouds (both Prometheus servers writing to a shared or hosted
+  one), persistent Prometheus storage, and alerts on archive failures and replica
+  lag; regional, multi-AZ clusters; one NAT gateway per AZ.
 - Cluster-wide default deny (`cnpg-system`, `kube-system`) and security-group-level
   egress filtering on the EKS nodes.

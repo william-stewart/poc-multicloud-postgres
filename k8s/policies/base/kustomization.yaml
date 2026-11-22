@@ -14,3 +14,4 @@ resources:
   - allow-sts.yaml
   - app-namespace.yaml
   - allow-app-to-primary.yaml
+  - allow-prometheus-scrape.yaml

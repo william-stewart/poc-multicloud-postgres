@@ -1,0 +1,21 @@
+# Prometheus and Grafana for the PostgreSQL dashboard. Flux applies this, then
+# ./config once the chart's CRDs exist (k8s/clusters/<cloud>/monitoring.yaml).
+# make e2e installs the same chart version and values locally
+# (E2E_MONITORING=1), then applies ./config.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  - sources.yaml
+  - kube-prometheus-stack/helmrelease.yaml
+
+# Same pattern as k8s/platform/base: stable names, watched by helm-controller.
+generatorOptions:
+  disableNameSuffixHash: true
+  labels:
+    reconcile.fluxcd.io/watch: Enabled
+configMapGenerator:
+  - name: kube-prometheus-stack-values
+    namespace: monitoring
+    files:
+      - values.yaml=kube-prometheus-stack/values.yaml

@@ -1,0 +1,22 @@
+# Rule 11: Prometheus (k8s/monitoring) scrapes each instance's metrics on
+# 9187: the operator's queries, the collector's metrics and the Barman Cloud
+# plugin's backup metrics. Nothing else in the monitoring namespace, and no
+# other port.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-prometheus-scrape
+  namespace: cnpg-db
+spec:
+  endpointSelector:
+    matchLabels:
+      cnpg.io/podRole: instance
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: monitoring
+            app.kubernetes.io/name: prometheus
+      toPorts:
+        - ports:
+            - port: "9187"
+              protocol: TCP
