@@ -56,7 +56,7 @@ replay a segment, so an unplanned failover can lose about a minute of writes; `m
 measures it. If the primary can't reach its archive, the replica stops advancing, and
 the lag grows for as long as the outage lasts.
 
-## Tested by breaking it
+## Testing failure scenarios
 
 `make e2e` runs the real manifests on a local cluster, then kills the primary pod, takes
 the object store away, switches over to the replica and back, and fails over with the
