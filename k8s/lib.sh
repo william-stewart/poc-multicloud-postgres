@@ -37,7 +37,10 @@ check_vars_match() {
 # Create or update a ConfigMap in flux-system from an env file.
 apply_flux_configmap() {
   local name=$1 vars=$2
-  kc create namespace flux-system --dry-run=client -o yaml | kc apply -f -
+  # Create the namespace only if it's missing: Flux's own install creates it
+  # without the annotation client-side apply expects, and applying over that
+  # prints a warning.
+  kc get namespace flux-system >/dev/null 2>&1 || kc create namespace flux-system
   kc --namespace flux-system create configmap "$name" --from-env-file="$vars" \
     --dry-run=client -o yaml | kc apply -f -
 }
