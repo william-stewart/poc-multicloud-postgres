@@ -8,21 +8,10 @@ container-optimized OSes (Bottlerocket, Container-Optimized OS) with no public I
 default-deny network policies allow only named flows and hostnames, and no identity
 holds a long-lived cloud key. Flux reconciles everything inside them from this repo.
 
-```mermaid
-flowchart TB
-  subgraph AWS["AWS · EKS"]
-    primary[("pg-primary")]
-    s3[\"S3: WAL + backups"/]
-  end
-  subgraph GCP["GCP · GKE"]
-    replica[("pg-replica")]
-    gcs[\"GCS: WAL + backups"/]
-  end
-  primary -- "writes" --> s3
-  replica -- "reads" --> s3
-  replica -- "writes" --> gcs
-  primary -. "reads after a switchover" .-> gcs
-```
+![pg-primary on AWS writes WAL and backups to S3; pg-replica on GCP reads them from S3
+and writes its own to GCS, which pg-primary reads after a switchover](docs/high_level.png)
+
+[Diagram source](docs/architecture.md)
 
 The clouds share no network: WAL travels through object storage, with no VPN or inbound
 path between them, at the cost of lag. While healthy, the replica trails by up to
