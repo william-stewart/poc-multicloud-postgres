@@ -54,7 +54,7 @@ Grafana opens read-only without a login. The admin password is in the
 `monitoring/kube-prometheus-stack-grafana` Secret. Give the VM about 10 GB with
 monitoring on.
 
-The screenshot in the [README](../README.md#testing-failure-scenarios) shows a run
+The screenshot in the [README](../README.md#tested-failure-scenarios) shows a run
 opened this way. The run marks each scenario on every panel as a region between dashed lines; hover over
 a line to see its name, or turn the marks off with the *End-to-end test scenarios*
 toggle. `run.sh` adds them through its own port-forward to Grafana, with the admin

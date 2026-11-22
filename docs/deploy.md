@@ -248,9 +248,9 @@ make grafana CONTEXT="$GKE" PORT=3001    # in another terminal: http://localhost
 Grafana opens read-only without a login, and only through the port-forward; the admin
 password is in the `monitoring/kube-prometheus-stack-grafana` Secret. Prometheus keeps
 two days of data, on an emptyDir volume, so a restart of its pod loses it. Prometheus
-reaches the instances' metrics port through rule 11 of the README's
-[network policies](../README.md#design); without it, default deny
-drops every scrape.
+reaches the instances' metrics port through
+[`allow-prometheus-scrape`](../k8s/policies/base/allow-prometheus-scrape.yaml); without
+it, default deny drops every scrape.
 
 ## Switchover, failover and failback
 
