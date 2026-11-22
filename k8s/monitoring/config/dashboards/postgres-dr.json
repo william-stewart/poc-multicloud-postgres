@@ -448,8 +448,8 @@
     {
       "id": 10,
       "type": "stat",
-      "title": "Age of the last base backup",
-      "description": "Per Cluster, from the Barman Cloud plugin: pg-primary's in S3, pg-replica's in GCS. Each cloud keeps its own, so either can restore without the other.",
+      "title": "Last base backup",
+      "description": "When each archive's newest base backup completed, from the Barman Cloud plugin: pg-primary's in S3, pg-replica's in GCS. Each cloud keeps its own, so either can restore without the other. Backups run when a Cluster is created and nightly at 02:00 UTC: orange after 25 hours, red after 48.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -467,14 +467,14 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "time() - max by (cluster) (barman_cloud_cloudnative_pg_io_last_available_backup_timestamp{cluster=~\"pg-primary|pg-replica\"} > 0)",
+          "expr": "max by (cluster) (barman_cloud_cloudnative_pg_io_last_available_backup_timestamp{cluster=~\"pg-primary|pg-replica\"} > 0) - time()",
           "legendFormat": "{{cluster}}"
         }
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "s",
-          "decimals": 0,
+          "unit": "dtdurations",
+          "decimals": 1,
           "color": {
             "mode": "thresholds"
           },
@@ -482,16 +482,16 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "red",
                 "value": null
               },
               {
                 "color": "orange",
-                "value": 90000
+                "value": -172800
               },
               {
-                "color": "red",
-                "value": 172800
+                "color": "green",
+                "value": -90000
               }
             ]
           }
@@ -507,7 +507,7 @@
           "values": false
         },
         "colorMode": "background",
-        "graphMode": "area",
+        "graphMode": "none",
         "textMode": "value_and_name",
         "justifyMode": "auto",
         "orientation": "horizontal"
@@ -516,8 +516,8 @@
     {
       "id": 11,
       "type": "stat",
-      "title": "Point-in-time recovery window",
-      "description": "How far back each archive can restore to: now minus its first recoverability point.",
+      "title": "Restorable back to",
+      "description": "The earliest point in time each archive can restore to on its own: its oldest base backup. Everything from there to the last archived WAL segment is recoverable. Moves forward once the 7-day retention policy starts deleting old backups.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -535,13 +535,13 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "time() - min by (cluster) (barman_cloud_cloudnative_pg_io_first_recoverability_point{cluster=~\"pg-primary|pg-replica\"} > 0)",
+          "expr": "min by (cluster) (barman_cloud_cloudnative_pg_io_first_recoverability_point{cluster=~\"pg-primary|pg-replica\"} > 0) * 1000",
           "legendFormat": "{{cluster}}"
         }
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "s",
+          "unit": "dateTimeAsIso",
           "decimals": 0,
           "color": {
             "mode": "thresholds"
@@ -567,7 +567,7 @@
           "values": false
         },
         "colorMode": "background",
-        "graphMode": "area",
+        "graphMode": "none",
         "textMode": "value_and_name",
         "justifyMode": "auto",
         "orientation": "horizontal"

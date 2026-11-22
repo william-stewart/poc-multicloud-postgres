@@ -296,7 +296,7 @@ port 9187. One PodMonitor scrapes them every 10s. Each scenario has its own shap
 | WAL segments each archive is behind the newest | The replica's line is the cross-cloud lag | 1: it rises until the replica replays the new segment. 4 stops both archives, so it stays flat |
 | WAL segments waiting to be archived | `.ready` files piling up on the WAL volume | 4: they pile up during the outage, then drain |
 | Failed archive attempts | Per minute | 4 |
-| Age of the last base backup, recovery window | Per archive, from the Barman Cloud plugin | 0: both archives get their first backup |
+| Last base backup, restorable back to | Per archive, from the Barman Cloud plugin: how long ago the newest backup completed, and the earliest point it can restore to | 0: both archives get their first backup |
 | Rows written per minute | Inserts, updates and deletes in `app`, per Cluster | Where each scenario's writes land |
 
 In the end-to-end test both archives are the same local S3 server and replication
