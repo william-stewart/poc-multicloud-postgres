@@ -216,11 +216,13 @@ kubectl --context "$GKE" -n kube-system get daemonsets | grep anetd   # no outpu
 kubectl cnpg status pg-primary -n cnpg-db --context "$EKS"
 aws s3 ls "s3://$(tofu -chdir=infra/30-data/aws output -raw wal_bucket)/pg-primary/"   # base/ and wals/
 
-# End to end: a row written on AWS appears on GCP within about 1-2 minutes.
+# End to end: a row written on AWS appears on GCP within seconds, because
+# pg_switch_wal() uploads the WAL file now (otherwise up to about 60s).
+# The replica has everything once both return the same max(ts).
 kubectl cnpg psql pg-primary -n cnpg-db --context "$EKS" -- -d app -c \
   "CREATE TABLE IF NOT EXISTS ping(ts timestamptz); INSERT INTO ping VALUES (now()); SELECT pg_switch_wal();"
-kubectl cnpg psql pg-replica -n cnpg-db --context "$GKE" -- -d app -c \
-  "SELECT max(ts) FROM ping; SELECT now() - pg_last_xact_replay_timestamp() AS lag;"
+kubectl cnpg psql pg-primary -n cnpg-db --context "$EKS" -- -d app -c "SELECT max(ts) FROM ping;"
+kubectl cnpg psql pg-replica -n cnpg-db --context "$GKE" -- -d app -c "SELECT max(ts) FROM ping;"
 
 # The replica keeps its own copy in GCS: base/ and wals/ under pg-replica/.
 gcloud storage ls "gs://$(tofu -chdir=infra/30-data/gcp output -raw wal_bucket)/pg-replica/"
