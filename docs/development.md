@@ -47,7 +47,11 @@ token and no cloud credentials.
 | `k8s/data` | The PostgreSQL clusters, object stores and backups |
 | `k8s/policies` | Default deny and Cilium allow rules for `cnpg-db` |
 | `k8s/monitoring` | Prometheus, Grafana, the PodMonitor and the PostgreSQL dashboard (Flux on both clusters, and `make e2e`) |
-| `k8s/*.sh` | `bootstrap.sh`, `data-vars.sh`, `app-credentials.sh` (run through `make`) |
+| `k8s/*.sh` | `bootstrap.sh`, `data-vars.sh`, `app-credentials.sh` (run through `make`) and their shared `lib.sh` |
 | `test/e2e` | The local end-to-end test (`make e2e`) and its overlays of `k8s/data` |
-| `docs` | Deploy and operate runbook, end-to-end test guide, design notes |
+| `test/live` | The drill on the live clusters (`make live-drill`) |
+| `scripts` | The module contract check, the Kubernetes validator and `cilium-enis.sh` |
+| `.github` | The CI workflow, branch rulesets and Renovate configuration |
+| `docs` | Deploy and operate runbook, end-to-end test guide, design notes, this guide and the README diagram's source |
 | `evidence/e2e` | Results of end-to-end runs |
+| `evidence/live` | Results and screenshots from the live clusters |
