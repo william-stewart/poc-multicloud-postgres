@@ -26,13 +26,16 @@ yet read pg-replica's GCS archive, because its GCS client was missing a project 
 That was the drill's failed check, fixed in #31. The red block before 12:00 is
 `pg-primary-2` still joining during the first deploy.*
 
-## Cilium drops a client the policy doesn't name
+## Cilium allows only the named flows
 
-![Hubble UI: a pod in the default namespace is denied on port 5432 to postgresql in cnpg-db](images/3-cilium-drops-unlisted-client.png)
+![Hubble UI for cnpg-db: flows to S3, STS, the Kubernetes API and Prometheus are allowed; PostgreSQL's connection to example.com and a pod in the default namespace connecting on 5432 are dropped](images/3-cilium-allows-and-drops.png)
 
-*Hubble on EKS. A test pod in the `default` namespace tries to connect to PostgreSQL
-on 5432, and every attempt is dropped: `cnpg-db` denies by default and allows only
-the `app` namespace, the cluster's own instances, the CNPG operator and Prometheus.*
+*Hubble on EKS, showing everything in and out of `cnpg-db`. Grey lines are allowed: the
+WAL bucket in S3, AWS STS, the Kubernetes API, Prometheus scraping metrics and traffic
+between the instances. Red lines are dropped: a PostgreSQL pod reaching out to
+`example.com`, and a test pod in the `default` namespace trying to connect on 5432.
+`cnpg-db` denies everything by default, so a hostname or client the policy doesn't
+name is blocked. The bucket's name is covered because it contains the AWS account ID.*
 
 ## WAL archiving and the first backup
 
