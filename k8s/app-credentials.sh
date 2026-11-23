@@ -41,18 +41,19 @@ database=app
 
 # The current password on one cluster, or nothing if it has none yet. Any
 # other error (an unreachable cluster) stops the script, so it never mistakes
-# one for "no password" and generates a second one.
+# one for "no password" and generates a second one. The checks are explicit:
+# set -e doesn't apply inside the $(...) these run in.
 current_password() {
   local encoded
   encoded=$(kubectl --context "$1" --namespace cnpg-db get secret app-owner \
-    --ignore-not-found -o jsonpath='{.data.password}')
+    --ignore-not-found -o jsonpath='{.data.password}') || return 1
   if [[ -n $encoded ]]; then
     base64 --decode <<<"$encoded"
   fi
 }
 
-eks_password=$(current_password "$eks")
-gke_password=$(current_password "$gke")
+eks_password=$(current_password "$eks") || { echo "can't read cnpg-db/app-owner on $eks; stopping before any change" >&2; exit 1; }
+gke_password=$(current_password "$gke") || { echo "can't read cnpg-db/app-owner on $gke; stopping before any change" >&2; exit 1; }
 if [[ -n $eks_password && -n $gke_password && $eks_password != "$gke_password" ]]; then
   echo "cnpg-db/app-owner differs between $eks and $gke; fix it by hand before running this" >&2
   exit 1

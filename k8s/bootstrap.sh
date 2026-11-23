@@ -6,6 +6,10 @@
 # the same values files and versions Flux uses, then installs Flux. Flux takes
 # over the existing releases and installs the rest of k8s/platform from git.
 #
+# On EKS the node group is created empty (see infra/modules/cluster/aws), so
+# that tofu apply doesn't wait on nodes that can't be Ready without a CNI.
+# This script scales it to node_count once Cilium is installed.
+#
 # Usage, from anywhere in the repo, after `tofu apply` in infra/20-clusters/<cloud>:
 #   k8s/bootstrap.sh <aws|gcp> <kube-context> [deploy-key-file]
 #
@@ -34,9 +38,36 @@ deploy_key=${3:-secrets/flux-deploy-key}
 source k8s/lib.sh
 
 require_tools tofu kubectl helm flux
+if [[ $cloud == aws ]]; then require_tools aws; fi
 [[ -f $deploy_key ]] || { echo "deploy key not found: $deploy_key (see README)" >&2; exit 1; }
 
 out() { tofu -chdir="infra/20-clusters/$cloud" output -raw "$1"; }
+
+# Scale the EKS node group from empty to node_count, then wait until that
+# many nodes have registered. Running it again changes nothing.
+scale_node_group() {
+  local cluster_name region name count desired start
+  cluster_name=$(out cluster_name)
+  region=$(out region)
+  name=$(out node_group_name)
+  count=$(out node_count)
+  desired=$(aws eks describe-nodegroup --region "$region" --cluster-name "$cluster_name" \
+    --nodegroup-name "$name" --query nodegroup.scalingConfig.desiredSize --output text)
+  if [[ $desired != "$count" ]]; then
+    echo "==> Scaling node group $name from $desired to $count nodes"
+    aws eks update-nodegroup-config --region "$region" --cluster-name "$cluster_name" \
+      --nodegroup-name "$name" --scaling-config "desiredSize=$count" >/dev/null
+  fi
+  echo "==> Waiting for $count nodes to register"
+  start=$(date +%s)
+  until (($(kc get nodes --no-headers 2>/dev/null | wc -l) >= count)); do
+    if (($(date +%s) - start > 900)); then
+      echo "only $(kc get nodes --no-headers 2>/dev/null | wc -l) of $count nodes registered after 15 minutes" >&2
+      exit 1
+    fi
+    sleep 10
+  done
+}
 
 check_cluster_context "$cloud"
 endpoint=$(out cluster_endpoint)
@@ -87,6 +118,10 @@ render "k8s/platform/$cloud/cilium-values.yaml" "$workdir/cilium-cloud.yaml"
 helm upgrade --install cilium cilium --repo https://helm.cilium.io --version "$CILIUM_VERSION" \
   --kube-context "$context" --namespace kube-system \
   -f "$workdir/cilium-base.yaml" -f "$workdir/cilium-cloud.yaml"
+
+if [[ $cloud == aws ]]; then
+  scale_node_group
+fi
 kc --namespace kube-system rollout status daemonset/cilium --timeout=10m
 kc --namespace kube-system rollout status deployment/cilium-operator --timeout=5m
 
@@ -100,9 +135,16 @@ if [[ $cloud == aws ]]; then
     --kube-context "$context" --namespace kube-system -f "$workdir/coredns.yaml" --wait --timeout 5m
 fi
 
-# With DNS available, Hubble Relay can reach the agents.
-echo "==> Waiting for Hubble Relay"
+# With DNS available, Hubble Relay can reach the agents. On EKS, Relay and
+# Hubble UI started before CoreDNS existed and may have given up on their
+# peers, so restart them now that names resolve.
+if [[ $cloud == aws ]]; then
+  echo "==> Restarting Hubble Relay and Hubble UI now that DNS works"
+  kc --namespace kube-system rollout restart deployment/hubble-relay deployment/hubble-ui
+fi
+echo "==> Waiting for Hubble Relay and Hubble UI"
 kc --namespace kube-system rollout status deployment/hubble-relay --timeout=5m
+kc --namespace kube-system rollout status deployment/hubble-ui --timeout=5m
 
 echo "==> Flux"
 flux create secret git flux-system --context "$context" --namespace flux-system \

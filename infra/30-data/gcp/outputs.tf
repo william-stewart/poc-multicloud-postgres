@@ -3,6 +3,11 @@ output "wal_bucket" {
   value       = google_storage_bucket.wal.name
 }
 
+output "project_id" {
+  description = "GCP project of the bucket. pg-primary's GCS client on EKS needs it, since no metadata server there provides one."
+  value       = var.project_id
+}
+
 output "wal_writer_service_account" {
   description = "Google service account that cnpg-db/pg-replica uses through Workload Identity."
   value       = google_service_account.writer.email

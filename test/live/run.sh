@@ -11,6 +11,9 @@
 #   4. Planned switchover to pg-replica and back, with promotion tokens: no row
 #      lost, and replication runs in both directions (pg-primary reads GCS
 #      through Workload Identity Federation while pg-replica is the primary).
+#   5. Network policy: the flows Cilium dropped in cnpg-db during the run,
+#      reported (not failed) so a missing allow rule shows up by name instead
+#      of as a timeout.
 #
 # Role changes are made with kubectl patch while Flux's data layer is
 # suspended on both clusters, not through commits: one command, nothing
@@ -58,6 +61,7 @@ k() { # cluster kubectl-args...
 # --- Results -----------------------------------------------------------------
 
 stamp=$(date -u +%Y%m%dT%H%M%SZ)
+started=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 evidence=evidence/live/$stamp.md
 diagnostics=test/live/results/$stamp
 rows=$(mktemp)
@@ -132,8 +136,22 @@ write_evidence() {
   echo "Evidence: $evidence"
 }
 
+# Flows Cilium dropped in cnpg-db since the run started, one line each, from
+# every agent on both clusters (each agent only sees its own node).
+policy_drops() {
+  local ctx agent
+  for ctx in "$EKS" "$GKE"; do
+    for agent in $(kubectl --context "$ctx" --namespace kube-system get pods -l k8s-app=cilium -o name); do
+      kubectl --context "$ctx" --namespace kube-system exec "$agent" -c cilium-agent -- \
+        hubble observe --namespace "$NS" --verdict DROPPED --since "$started" -o compact 2>/dev/null || true
+    done
+  done
+}
+
 dump_diagnostics() {
   local cluster dir pod
+  mkdir -p "$diagnostics"
+  policy_drops >"$diagnostics/policy-drops.txt" 2>&1 || true
   for cluster in pg-primary pg-replica; do
     dir=$diagnostics/$cluster
     mkdir -p "$dir"
@@ -404,6 +422,18 @@ test_switchover() {
   record "replication from pg-primary resumes" PASS "$(since "$start")s"
 }
 
+test_policy_drops() {
+  begin_scenario "5. network policy"
+  local drops count
+  drops=$(policy_drops | grep -v '^$' || true)
+  count=$(grep -c . <<<"$drops" || true)
+  record "flows dropped by policy in $NS during the run" INFO "$count"
+  if ((count > 0)); then
+    echo "    first drops (all of them: rerun with hubble observe --verdict DROPPED):"
+    head -5 <<<"$drops" | sed 's/^/      /'
+  fi
+}
+
 # --- Main --------------------------------------------------------------------
 
 # A refused preflight writes no evidence: nothing was tested or changed.
@@ -415,4 +445,5 @@ test_replication
 test_kill_primary
 test_lose_replica_pod
 test_switchover
+test_policy_drops
 scenario=finished

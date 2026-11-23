@@ -91,16 +91,23 @@ run "nodes_wait_for_cilium" {
   }
 }
 
-run "node_group_is_fixed_size_and_private" {
+run "node_group_starts_empty_and_is_private" {
   command = plan
 
+  # Created empty so tofu apply doesn't wait on nodes that can't be Ready
+  # before Cilium; make bootstrap scales it to node_count.
   assert {
     condition = (
-      local.default_node_group.min_size == 2 &&
+      local.default_node_group.min_size == 0 &&
       local.default_node_group.max_size == 2 &&
-      local.default_node_group.desired_size == 2
+      local.default_node_group.desired_size == 0
     )
-    error_message = "The node group must be fixed at node_count."
+    error_message = "The node group must start empty, with room for node_count nodes."
+  }
+
+  assert {
+    condition     = output.node_count == 2
+    error_message = "make bootstrap scales the node group to node_count, so it must be output."
   }
 
   assert {

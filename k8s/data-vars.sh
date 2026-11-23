@@ -47,6 +47,7 @@ case $cloud in
       echo "WAL_WRITER_ROLE_ARN=$(tofu -chdir=infra/30-data/aws output -raw wal_writer_role_arn)"
       echo "WAL_BUCKET_REGION=$(tofu -chdir=infra/30-data/aws output -raw wal_bucket_region)"
       echo "GCS_WAL_BUCKET=$(tofu -chdir=infra/30-data/gcp output -raw wal_bucket)"
+      echo "GCP_PROJECT_ID=$(tofu -chdir=infra/30-data/gcp output -raw project_id)"
     } >"$vars"
     # Not a secret (it names a token file and a provider), but the Barman
     # Cloud plugin only reads GCS credentials from a Secret.
@@ -80,5 +81,6 @@ cat <<EOF
 
 Flux applies k8s/data/$cloud on its next reconcile. To apply it now and watch:
   flux --context $context reconcile kustomization data --with-source
-  kubectl --context $context -n cnpg-db get cluster,backup -w
+  kubectl --context $context -n cnpg-db get cluster -w
+  kubectl --context $context -n cnpg-db get backup -w
 EOF

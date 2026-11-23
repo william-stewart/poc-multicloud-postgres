@@ -14,7 +14,7 @@ layer below it by name, so the order matters in both directions.
 | 1 | State backends (once) | `tofu apply` | 2 min |
 | 2 | Networks | `tofu apply` | 3–5 min |
 | 3 | Clusters | `tofu apply` | 12–15 min (EKS) |
-| 4 | Platform: Cilium, CoreDNS, Flux, then Flux installs the rest | `make bootstrap` | 5–8 min |
+| 4 | Platform: Cilium, the EKS nodes, CoreDNS, Flux, then Flux installs the rest | `make bootstrap` | 8–12 min |
 | 5 | Archives: S3 and GCS buckets, IAM, Workload Identity Federation | `tofu apply` | 2–3 min |
 | 6 | Credentials: the app owner on both clusters | `make app-credentials` | 1 min |
 | 7 | Primary on EKS: network policies, then the database | `make data-vars` | 5 min + first backup |
@@ -27,7 +27,14 @@ layer below it by name, so the order matters in both directions.
   `gcloud auth application-default login`.
 - Tools: `tofu`, `aws` (v2), `gcloud` with `gke-gcloud-auth-plugin`, `kubectl`, `helm`,
   `flux`, `cilium`, `hubble`, the `kubectl cnpg` plugin and `gh`. Versions used for
-  development are in `.tool-versions`.
+  development are in `.tool-versions`. On macOS:
+
+  ```sh
+  brew install opentofu awscli kubectl helm fluxcd/tap/flux cilium-cli hubble kubectl-cnpg gh
+  brew install --cask google-cloud-sdk
+  gcloud components install gke-gcloud-auth-plugin
+  gke-gcloud-auth-plugin --version   # must be on PATH: kubectl needs it for GKE
+  ```
 - Flux reads this private repo with a **read-only deploy key**. Create it once; the
   private half stays under `secrets/`, which is gitignored:
 
@@ -90,7 +97,10 @@ export EKS=poc-mcpg
 export GKE="$(kubectl config get-contexts -o name | grep '^gke_')"
 ```
 
-Nodes stay `NotReady` until Cilium is installed in the next step; that is expected.
+The EKS node group is created with no nodes. Without a CNI they could never become
+`Ready`, and EKS doesn't finish creating a node group until they are, so `make
+bootstrap` adds them in the next step, once Cilium is installed. GKE's nodes come up
+tainted, and run nothing until Cilium removes the taint.
 Only the IAM principal that ran the apply is a cluster admin on EKS. If your IP
 changes, re-apply with the new `MY_IP`.
 
@@ -106,9 +116,12 @@ one the stack built. It then:
 
 1. writes the cluster's account-specific values (API host, IAM role ARNs, DNS IP) from
    `tofu output` into the `flux-system/cluster-vars` ConfigMap
-2. installs Cilium with Helm and waits for the agents, the operator and the nodes;
-   on EKS it then installs CoreDNS, because Flux can't resolve `github.com` without it
-3. installs Flux with the deploy key and points it at `k8s/clusters/<cloud>`
+2. installs Cilium with Helm; on EKS it then scales the node group to `node_count`
+   and waits for the nodes to register
+3. waits for the Cilium agents, the operator and the nodes to be `Ready`; on EKS it
+   then installs CoreDNS, because Flux can't resolve `github.com` without it, and
+   restarts Hubble Relay and Hubble UI, which started before DNS worked
+4. installs Flux with the deploy key and points it at `k8s/clusters/<cloud>`
 
 Flux takes over the Cilium and CoreDNS releases (same versions and values files) and
 installs cert-manager, the CloudNativePG operator, the Barman Cloud plugin and, on EKS,
@@ -159,7 +172,8 @@ clusters are up, GKE already holds the credentials if AWS is lost.
 
 ```sh
 make data-vars CLOUD=aws CONTEXT="$EKS"
-kubectl --context "$EKS" -n cnpg-db get cluster,backup -w
+kubectl --context "$EKS" -n cnpg-db get cluster pg-primary -w   # until "Cluster in healthy state"
+kubectl --context "$EKS" -n cnpg-db get backup -w               # until the first backup is completed
 ```
 
 `make data-vars` stores the bucket names, region and writer role in the
@@ -267,6 +281,9 @@ make live-drill EKS="$EKS" GKE="$GKE"
 2. Kill the primary pod on EKS: the other instance takes writes and nothing is lost.
 3. Lose `pg-replica`'s pod on GKE: it comes back and resumes from S3.
 4. Planned switchover to GCP and back: no row lost, replication both ways.
+5. Network policy: how many flows Cilium dropped in `cnpg-db` during the run, with
+   the first few printed, so a missing allow rule shows up by name rather than as a
+   stuck archive.
 
 It refuses to run unless both contexts are the clusters the stacks built and the
 roles match git. It suspends Flux's `data` layer on both clusters and makes the
