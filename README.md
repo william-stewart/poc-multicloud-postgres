@@ -57,6 +57,9 @@ outage](evidence/e2e_grafana.png)
 the roles swap and swap back, WAL waits for the archive during the outage, and
 `pg-primary` ends fenced after the failover. [All runs](evidence/e2e).*
 
+The same scenarios, minus the destructive ones, also ran on real EKS and GKE clusters
+([screenshots and results](evidence/live)).
+
 ## Security
 
 | Identity | Can | Only |
