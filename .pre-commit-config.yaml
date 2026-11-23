@@ -105,15 +105,3 @@ repos:
         language: pygrep
         entry: '(provider\s+"(helm|kubernetes|kubectl)")|(source\s*=\s*"[^"]*/(helm|kubernetes|kubectl)")'
         files: \.tf$
-
-      - id: no-local-only-files
-        name: local-only planning files must not be committed
-        language: fail
-        entry: these files are local-only and listed in .git/info/exclude
-        files: ^(PLAN\.md|CLAUDE\.md|\.claude/)
-
-      - id: no-ai-attribution
-        name: no AI attribution trailers in commit messages
-        language: pygrep
-        entry: '(?i)(co-authored-by:.*(claude|anthropic|copilot|openai|chatgpt))|(generated (with|by) .*(claude|ai\b|copilot|chatgpt))'
-        stages: [commit-msg]

@@ -12,7 +12,6 @@ framework:
   - secrets
 skip-path:
   - \.terraform
-  - \.claude
   - secrets
   # Diagnostics from failed `make e2e` and `make live-drill` runs: gitignored
   # cluster dumps whose status hashes and promotion tokens look like secrets
