@@ -45,9 +45,12 @@ first base backup completed and the cluster was restorable from 11:57.*
 
 ## The replica on GKE has the data
 
-![psql on pg-replica: the latest ping row and the time since the last replayed commit](images/5-replica-has-the-data.png)
+![psql on pg-replica on GKE returning the latest ping row written on EKS](images/5-replica-has-the-data.png)
 
-*A query against `pg-replica` on GKE returns the latest row written on EKS. `lag` is
-the time since the last commit it replayed, so it grows while the primary is idle;
-it isn't the replication delay. The drill measures that delay directly: a row
-written on EKS was visible on GKE 8.5s after a WAL switch.*
+*A query against `pg-replica` on GKE returns the latest row written on EKS. The
+replica copies data by fetching WAL files from S3, and the primary uploads one at
+least every 60s, so it should fall at most about 60s behind, plus transfer time. In the drill, a new row
+reached GKE 8.5s after its WAL file was uploaded, and the dashboards' "WAL segments
+the replica's archive trails the primary's" panel stayed at 0 throughout. The `lag`
+value counts time since the last commit the replica applied, which grows whenever
+EKS is idle, so it doesn't measure how far behind the replica is.*
